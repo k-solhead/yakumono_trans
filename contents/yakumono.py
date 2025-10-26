@@ -44,8 +44,8 @@ def pdf_insert(doc, search_text, input_text):
                 page.add_widget(widget)
 
 # PDFファイルを開く
-st.title("約物変換")
-st.write("PDFファイルの約物を適切に変換します")
+st.title("約物確認")
+st.write("PDFファイルの約物について適切かどうか確認します")
 
 uploaded_file = st.file_uploader("PDFファイルをアップロード", type="pdf")
 
