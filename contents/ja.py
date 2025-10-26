@@ -44,8 +44,8 @@ def pdf_insert(doc, search_text, input_text):
                 page.add_widget(widget)
 
 # PDFファイルを開く
-st.title("全角半角変換")
-st.write("日本語PDFファイルの数字・記号を全角や半角に変換します")
+st.title("和文全角半角チェック")
+st.write("日本語PDFファイルについての数字・記号の全角、半角が適切かどうか確認します")
 
 uploaded_file = st.file_uploader("PDFファイルをアップロード", type="pdf")
 
