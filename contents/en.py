@@ -1,7 +1,6 @@
 import streamlit as st
 import fitz # PyMuPDFをインポート
 import pymupdf
-#from autocorrect import Speller
 from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import sys
