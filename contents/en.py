@@ -5,7 +5,7 @@ from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import sys
 
-
+count = 0
 # 分かち書きの英単語から指定された文字列を検索する関数
 #　　検索文字列を含む完全な単語の座標の配列をリスト化
 def mark_word(page, text):
@@ -49,7 +49,9 @@ def pdf_insert(doc, search_text, input_text, replace):
                         | fitz.PDF_CH_FIELD_IS_EDIT
                         | fitz.PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE  # update when focus changes
                     )
-                    widget.field_name = dropdown_name
+                    global count
+                    count += 1
+                    widget.field_name = dropdown_name + str(count)
                     widget.choice_values = options
                     widget.border_color = (0.5, 0.5, 0.5) # 枠線の色 (グレー)
                     widget.font_size = 8
