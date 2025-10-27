@@ -4,7 +4,7 @@ import pymupdf
 import re
 import sys
 
-
+count = 0
 # pdfにハイライト注釈をつける関数
 def pdf_insert(doc, search_text, input_text):
     highlight_color = (0, 1, 0)
@@ -36,7 +36,9 @@ def pdf_insert(doc, search_text, input_text):
                     | fitz.PDF_CH_FIELD_IS_EDIT
                     | fitz.PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE  # update when focus changes
                 )
-                widget.field_name = dropdown_name
+				global count
+				count += 1
+                widget.field_name = dropdown_name + str(count)
                 widget.choice_values = options
                 widget.border_color = (0.5, 0.5, 0.5) # 枠線の色 (グレー)
                 widget.font_size = 8
