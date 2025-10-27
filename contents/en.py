@@ -21,6 +21,7 @@ def mark_word(page, text):
 # pdfにハイライト注釈をつける関数
 def pdf_insert(doc, search_text, input_text, replace):
     highlight_color = (0, 1, 0)
+    count = 0
 
     for page in doc:
         # ページ内で指定したテキストを検索し、矩形のリストを取得
@@ -32,7 +33,8 @@ def pdf_insert(doc, search_text, input_text, replace):
                 annot.set_colors(stroke=highlight_color)
                 annot.update()
                 # プルdownメニューの追加
-                dropdown_name = "status_select"  # フィールド名
+                count += 1
+                dropdown_name = "status_select" + count  # フィールド名
                 # Changed options format back to a list of strings
                 options = [input_text]
 
