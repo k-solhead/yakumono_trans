@@ -36,8 +36,8 @@ def pdf_insert(doc, search_text, input_text):
                     | fitz.PDF_CH_FIELD_IS_EDIT
                     | fitz.PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE  # update when focus changes
                 )
-				global count
-				count += 1
+                global count
+                count += 1
                 widget.field_name = dropdown_name + str(count)
                 widget.choice_values = options
                 widget.border_color = (0.5, 0.5, 0.5) # 枠線の色 (グレー)
