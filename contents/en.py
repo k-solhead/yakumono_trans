@@ -6,7 +6,7 @@ from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import sys
 
-
+count = 0
 # 分かち書きの英単語から指定された文字列を検索する関数
 #　　検索文字列を含む完全な単語の座標の配列をリスト化
 def mark_word(page, text):
@@ -21,7 +21,6 @@ def mark_word(page, text):
 # pdfにハイライト注釈をつける関数
 def pdf_insert(doc, search_text, input_text, replace):
     highlight_color = (0, 1, 0)
-    count = 0
 
     for page in doc:
         # ページ内で指定したテキストを検索し、矩形のリストを取得
