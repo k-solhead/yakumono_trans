@@ -34,7 +34,7 @@ def pdf_insert(doc, search_text, input_text, replace):
                 annot.update()
                 # プルdownメニューの追加
                 count += 1
-                dropdown_name = "status_select" + count  # フィールド名
+                dropdown_name = "status_select" + str(count)  # フィールド名
                 # Changed options format back to a list of strings
                 options = [input_text]
 
