@@ -1,6 +1,6 @@
 import streamlit as st
 #import fitz # PyMuPDFをインポート
-import pymupdf
+import pymupdf as fitz
 import re
 import sys
 
