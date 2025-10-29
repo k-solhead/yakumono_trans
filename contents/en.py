@@ -13,7 +13,7 @@ def mark_word(page, text):
     rlist = []
     for w in wlist:  # scan through all words on page
         if text in w[4]:  # w[4] is the word's string
-            r = pymupdf.Rect(w[:4])  # make rect from word bbox
+            r = fitz.Rect(w[:4])  # make rect from word bbox
             rlist.append(r)
     return rlist
 
