@@ -203,11 +203,11 @@ if uploaded_file is not None:
         st.success("処理が完了しました")
 
         # ドキュメントの内容を表示
-        st.subheader("処理されたWordファイルの内容")
+        # st.subheader("処理されたWordファイルの内容")
         
         # ドキュメント内の各段落を読み込んで表示
-        for para in doc.paragraphs:
-            st.write(para.text)
+        # for para in doc.paragraphs:
+        #     st.write(para.text)
         
         st.success("ダウンロードボタンを押してください")
         with open(output_word, "rb") as file:
