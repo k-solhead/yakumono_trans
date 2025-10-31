@@ -3,16 +3,16 @@ import streamlit as st
 def main():
 
     top_page = st.Page(
-        page = "contents/en.py", title="SpellCheck", default=True
+        page = "contents/spell.py", title="SpellCheck", default=True
     )
-    wabun = st.Page(
-        page = "contents/ja.py", title="Zenkaku"
+    English = st.Page(
+        page = "contents/en.py", title="English"
     )
-    yakumono = st.Page(
-        page = "contents/yakumono.py", title="Yakumono"
+    Japanese = st.Page(
+        page = "contents/ja.py", title="Japanese"
     )
 
-    pg = st.navigation([top_page, wabun, yakumono])
+    pg = st.navigation([top_page, English, Japanese])
     pg.run()
 
 if __name__ == "__main__":
