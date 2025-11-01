@@ -1,6 +1,6 @@
 import streamlit as st
-import fitz # PyMuPDFをインポート
-import pymupdf
+# import fitz # PyMuPDFをインポート
+import pymupdf as fitz
 from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import sys
