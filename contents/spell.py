@@ -1,6 +1,5 @@
 import streamlit as st
-# import fitz # PyMuPDFをインポート
-import pymupdf as fitz
+import pymupdf
 from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import sys
@@ -43,13 +42,13 @@ def pdf_insert(doc, search_text, input_text):
                 # Check if input_text is not empty before adding the widget
                 if input_text:
                     # ウィジェット（プルdownメニュー）を作成
-                    widget = fitz.Widget()
+                    widget = pymupdf.Widget()
                     widget.rect = rect
-                    widget.field_type = fitz.PDF_WIDGET_TYPE_COMBOBOX
+                    widget.field_type = pymupdf.PDF_WIDGET_TYPE_COMBOBOX
                     widget.field_flags = (
-                        fitz.PDF_CH_FIELD_IS_COMBO
-                        | fitz.PDF_CH_FIELD_IS_EDIT
-                        | fitz.PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE  # update when focus changes
+                        pymupdf.PDF_CH_FIELD_IS_COMBO
+                        | pymupdf.PDF_CH_FIELD_IS_EDIT
+                        | pymupdf.PDF_CH_FIELD_IS_COMMIT_ON_SEL_CHANGE  # update when focus changes
                     )
                     global count
                     count += 1
@@ -72,7 +71,7 @@ if uploaded_file is not None:
 
     # アップロードされたファイルをバイトストリームとして読み込み、PyMuPDFで開く
     # `uploaded_file.read()`でファイル内容をバイトデータとして取得
-    with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+    with pymupdf.open(stream=uploaded_file.read(), filetype="pdf") as doc:
 
         # スペルチェック
         spell = SpellChecker() # Initialize pyspellchecker
