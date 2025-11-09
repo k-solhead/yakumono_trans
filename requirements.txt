@@ -1,3 +1,5 @@
 pymupdf==1.26.5
 pyspellchecker==0.5.6
 python-docx==1.2.0
+requests==2.32.5
+bs4==0.0.2
