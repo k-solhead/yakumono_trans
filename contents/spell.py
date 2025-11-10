@@ -4,24 +4,38 @@ from spellchecker import SpellChecker # Using pyspellchecker instead
 import re
 import requests
 from bs4 import BeautifulSoup
+from requests.exceptions import Timeout
 import sys
 
 highlight_color = (0, 1, 0)
 output_pdf = "./output/output.pdf"
 local_dic = "./my_custom_dict.json"
 count = 0
+fix_word = []   # 要修正単語のリスト（weblio検索で同じ単語で04 Client Errorを繰り返さないよう設定）
 
-# 実在する単語かweblioで確認する（True:実在、False:スペルミス）
+# 単語をweblioで確認する（True:実在、False:スペルミス）
 def checkweblio(word):
+    if word in fix_word:
+        print("fix_wordに該当")
+        return False
     url1 = "https://ejje.weblio.jp/content/"
     url = url1 + str(word)
-    res = requests.get(url)
-    soup = BeautifulSoup(res.text, "html.parser")
-    elem = soup.select("#summary > div.summaryM.descriptionWrp > p > span.content-explanation.ej")
-    if elem:
-        return True
-    else:
-        return False
+    try:
+        res = requests.get(url, timeout=5)
+        if res.status_code == 404:  # 検索に該当の単語が見つからない場合、
+            fix_word.append(word)
+            print(fix_word)
+        elif res.ok:
+            soup = BeautifulSoup(res.text, "html.parser")
+            elem = soup.select("#summary > div.summaryM.descriptionWrp > p > span.content-explanation.ej")
+            if elem:
+                return True
+            else:
+                return False
+        else:
+            return False
+    except Timeout:
+        pass
 
 # 分かち書きの英単語から指定された文字列を検索する関数
 # 検索文字列を含む完全な単語の座標の配列をリスト化
