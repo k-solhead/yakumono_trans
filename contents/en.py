@@ -6,8 +6,6 @@ import re
 output_word = "./output/output.docx"
 replacement = {
     '\u3000':'\u0020',      # 全角空白を半角空白へ
-    '. \n':'.\n',           # 文末の半角空白を削除（改行LFの場合）
-    '. \r\n':'.\r\n',       # 文末の半角空白を削除（改行CRLFの場合）
     '\u30FB':'\u2022',      # 中黒をビュレットに変換
     '\uFF01':'\u0021',      # !
     '\uFF02':'\u0022',      # "
@@ -193,14 +191,15 @@ if uploaded_file is not None:
     try:
         # python-docxでWordドキュメントを開く
         doc = docx.Document(doc_file)
+        # re.DOTALL は改行を含む任意のマッチングを可能にする場合に有用
+        pattern = re.compile(r'\.\s+', re.DOTALL)
         for para in doc.paragraphs:
-            t = para.text
+            t = re.sub(pattern, '.', para.text)
             for old,new in replacement.items():
                 t = t.replace(old, new)
             para.text = t
 
         # 変更を新しいPDFファイルに保存
-        # output_word = "./output/output.docx"
         doc.save(output_word)
         st.success("処理が完了しました")
 
