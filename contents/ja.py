@@ -2,6 +2,7 @@
 import streamlit as st
 import docx
 from io import BytesIO
+import os
 import re
 
 output_word = "./output/output.docx"
@@ -18,9 +19,9 @@ replacement = {
     '\u0029':'\uFF09',      # )　(全角)
     '\u002A':'\uFF0A',      # *　(全角)
     '\u002B':'\uFF0B',      # +　(全角)
-    '\uFF0C':'\u002C',      # ,　(半角)　桁カンマ
+    '\u002C':'\uFF0C',      # ,　(全角)
     '\u002D':'\uFF0D',      # -　(全角)
-    '\uFF0E':'\u002E',      # .　(半角)　小数点
+    '\u002E':'\uFF0E',      # .　(全角)
     '\u002F':'\uFF0F',      # /　(全角)
     '\uFF10':'\u0030',      # 0　(半角)
     '\uFF11':'\u0031',      # 1　(半角)
@@ -183,6 +184,7 @@ uploaded_file = st.file_uploader("Wordファイル（.docx）をアップロー�
 
 # ファイルがアップロードされた場合の処理
 if uploaded_file is not None:
+    file_name = os.path.splitext(uploaded_file.name)[0]  # アップロードされたファイル名を取得
     st.success("ファイルが正常にアップロードされました。")
 
     # BytesIOでアップロードされたファイルを扱う
@@ -215,7 +217,7 @@ if uploaded_file is not None:
             st.download_button(
                 label="Word文書をダウンロード",
                 data=word_data,
-                file_name="en_word.docx",
+                file_name=file_name+"_chk.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", # WordファイルのMIMEタイプ
             )
         print(f"ダウンロードしました。")

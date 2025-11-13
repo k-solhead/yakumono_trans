@@ -5,6 +5,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from requests.exceptions import Timeout
+import os
 import sys
 
 highlight_color = (0, 1, 0)
@@ -55,6 +56,7 @@ st.write("英語PDFファイルのスペルチェックをします")
 uploaded_file = st.file_uploader("PDFファイルをアップロード", type="pdf")
 
 if uploaded_file is not None:
+    file_name = os.path.splitext(uploaded_file.name)[0]  # アップロードされたファイル名を取得
     st.success("ファイルがアップロードされました。")
     
     try:
@@ -161,7 +163,7 @@ if uploaded_file is not None:
             st.download_button(
                 label="PDFをダウンロード",
                 data=pdf_data,
-                file_name="spellcheck.pdf",
+                file_name=file_name+"_chk.pdf",
                 mime="application/pdf"
             )
         print(f"ダウンロードしました。")

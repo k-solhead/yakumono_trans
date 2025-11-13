@@ -1,6 +1,7 @@
 import streamlit as st
 import docx
 from io import BytesIO
+import os
 import re
 
 output_word = "./output/output.docx"
@@ -183,6 +184,7 @@ uploaded_file = st.file_uploader("Wordファイル（.docx）をアップロー�
 
 # ファイルがアップロードされた場合の処理
 if uploaded_file is not None:
+    file_name = os.path.splitext(uploaded_file.name)[0]  # アップロードされたファイル名を取得
     st.success("ファイルが正常にアップロードされました。")
 
     # BytesIOでアップロードされたファイルを扱う
@@ -216,7 +218,7 @@ if uploaded_file is not None:
             st.download_button(
                 label="Word文書をダウンロード",
                 data=word_data,
-                file_name="en_word.docx",
+                file_name=file_name+"_chk.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", # WordファイルのMIMEタイプ
             )
         print(f"ダウンロードしました。")
