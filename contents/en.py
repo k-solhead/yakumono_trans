@@ -200,6 +200,8 @@ if uploaded_file is not None:
             for old,new in replacement.items():
                 t = t.replace(old, new)
             para.text = t
+            if para.style.name == 'List Bullet' or para.style.name == 'List Number':
+                para.style = 'Normal'
 
         # 変更を新しいPDFファイルに保存
         doc.save(output_word)
