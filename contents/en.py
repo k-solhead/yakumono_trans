@@ -177,7 +177,7 @@ replacement = {
     '\t\\':'\t¥',
 }
 
-st.title("英文文字・記号修正")
+st.title("テキスト整形（英文）")
 st.write("英文フォントの半角への修正や約物の自動変換をします")
 
 # st.file_uploaderウィジェットの作成
