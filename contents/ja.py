@@ -180,52 +180,73 @@ replacement = {
 st.title("テキスト整形（和文）")
 st.write("和文フォントの全角・半角への修正や約物の自動変換をします")
 
-# st.file_uploaderウィジェットの作成
-# type引数で受け付けるファイルの形式を'.docx'に限定
-uploaded_file = st.file_uploader("Wordファイル（.docx）をアップロード", type=['docx'])
+option = st.radio("Word文書かテキストか整形対象を選択してください", ("Word文書", "テキスト文書"))
 
-# ファイルがアップロードされた場合の処理
-if uploaded_file is not None:
-    file_name = os.path.splitext(uploaded_file.name)[0]  # アップロードされたファイル名を取得
-    st.success("ファイルが正常にアップロードされました。")
-
-    # BytesIOでアップロードされたファイルを扱う
-    doc_file = BytesIO(uploaded_file.getvalue())
-
-    try:
-        # python-docxでWordドキュメントを開く
-        doc = docx.Document(doc_file)
-        for para in doc.paragraphs:
-            t = para.text
+if option == "テキスト文書":
+    if "text" not in st.session_state:
+        st.session_state.text = ""
+    st.session_state.text = st.text_area("テキストを貼りつけてください", height=300, placeholder="ここに貼りつけてください")
+    
+    if st.button("実行する"):    
+        try:
+            text = st.session_state.text
             for old,new in replacement.items():
-                t = t.replace(old, new)
-            para.text = t
-
-        # 変更を新しいPDFファイルに保存
-        # output_word = "./output/output.docx"
-        doc.save(output_word)
-        st.success("処理が完了しました")
-
-        # ドキュメントの内容を表示
-        #st.subheader("処理されたWordファイルの内容")
+                text = text.replace(old, new)
         
-        # ドキュメント内の各段落を読み込んで表示
-        #for para in doc.paragraphs:
-        #    st.write(para.text)
-        st.success("ダウンロードボタンを押してください")
-        with open(output_word, "rb") as file:
-            word_data = file.read()
-            # ダウンロードボタンを作成
-            st.download_button(
-                label="Word文書をダウンロード",
-                data=word_data,
-                file_name=file_name+"_chk.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", # WordファイルのMIMEタイプ
-            )
-        print(f"ダウンロードしました。")
-        
-    except Exception as e:
-        st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+            st.success("処理が完了しました。下記テキストをコピペしてください")
+            with st.container(border=True):
+                st.text(text)
+            
+        except Exception as e:
+            st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+            
 else:
-    st.info("ファイルをアップロードしてください。")
+    # st.file_uploaderウィジェットの作成
+    # type引数で受け付けるファイルの形式を'.docx'に限定
+    uploaded_file = st.file_uploader("Wordファイル（.docx）をアップロード", type=['docx'])
+
+    # ファイルがアップロードされた場合の処理
+    if uploaded_file is not None:
+        file_name = os.path.splitext(uploaded_file.name)[0]  # アップロードされたファイル名を取得
+        st.success("ファイルが正常にアップロードされました。")
+
+        # BytesIOでアップロードされたファイルを扱う
+        doc_file = BytesIO(uploaded_file.getvalue())
+
+        try:
+            # python-docxでWordドキュメントを開く
+            doc = docx.Document(doc_file)
+            for para in doc.paragraphs:
+                t = para.text
+                for old,new in replacement.items():
+                    t = t.replace(old, new)
+                para.text = t
+
+            # 変更を新しいPDFファイルに保存
+            # output_word = "./output/output.docx"
+            doc.save(output_word)
+            st.success("処理が完了しました")
+
+            # ドキュメントの内容を表示
+            #st.subheader("処理されたWordファイルの内容")
+        
+            # ドキュメント内の各段落を読み込んで表示
+            #for para in doc.paragraphs:
+            #    st.write(para.text)
+            st.success("ダウンロードボタンを押してください")
+            with open(output_word, "rb") as file:
+                word_data = file.read()
+                # ダウンロードボタンを作成
+                st.download_button(
+                    label="Word文書をダウンロード",
+                    data=word_data,
+                    file_name=file_name+"_chk.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", # WordファイルのMIMEタイプ
+                )
+            print(f"ダウンロードしました。")
+        
+        except Exception as e:
+            st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+    else:
+        st.info("ファイルをアップロードしてください。")
             
