@@ -245,6 +245,7 @@ else:
                     data=word_data,
                     file_name=file_name+"_chk.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", # WordファイルのMIMEタイプ
+                    on_click="ignore" # 再実行を無視する設定
                 )
             print(f"ダウンロードしました。")
 

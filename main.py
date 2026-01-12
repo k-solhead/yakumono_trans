@@ -11,8 +11,11 @@ def main():
     Japanese = st.Page(
         page = "contents/ja.py", title="Japanese"
     )
+    Dictionary = st.Page(
+        page = "contents/dictionary.py", title="Dictionary"
+    )
 
-    pg = st.navigation([top_page, English, Japanese])
+    pg = st.navigation([top_page, English, Japanese, Dictionary])
     pg.run()
 
 if __name__ == "__main__":

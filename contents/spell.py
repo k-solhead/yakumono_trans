@@ -164,7 +164,8 @@ if uploaded_file is not None:
                 label="PDFをダウンロード",
                 data=pdf_data,
                 file_name=file_name+"_chk.pdf",
-                mime="application/pdf"
+                mime="application/pdf",
+                on_click="ignore" # 再実行を無視する設定
             )
         print(f"ダウンロードしました。")
         
