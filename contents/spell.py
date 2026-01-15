@@ -115,6 +115,7 @@ if uploaded_file is not None:
                     input_text = ""
                 
                 # ページ内で指定したテキストを検索し、矩形のリストを取得
+                word = ' ' + word + ' ' # 前後を半角空白ではさみ、指定テキストを部分的に含む単語を除外
                 text_instances = page.search_for(word)
                 # 見つかったすべてのテキストにハイlight注釈を追加
                 for inst in text_instances:
