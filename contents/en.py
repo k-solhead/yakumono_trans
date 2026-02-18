@@ -219,10 +219,12 @@ else:
             # re.DOTALL は改行を含む任意のマッチングを可能にする場合に有用
             pattern = re.compile(r'\.\s+', re.DOTALL)
             for para in doc.paragraphs:
-                t = re.sub(pattern, '.', para.text)
-                for old,new in replacement.items():
-                    t = t.replace(old, new)
-                para.text = t
+                # Run単位で置換して書式を保持
+                for run in para.runs:
+                    t = re.sub(pattern, '.', run.text)
+                    for old, new in replacement.items():
+                        t = t.replace(old, new)
+                    run.text = t
                 if para.style.name == 'List Bullet' or para.style.name == 'List Number':
                     para.style = 'Normal'
 

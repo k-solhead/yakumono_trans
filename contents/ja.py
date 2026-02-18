@@ -217,10 +217,10 @@ else:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
             for para in doc.paragraphs:
-                t = para.text
-                for old,new in replacement.items():
-                    t = t.replace(old, new)
-                para.text = t
+                # Run単位で置換して書式を保持
+                for run in para.runs:
+                    for old, new in replacement.items():
+                        run.text = run.text.replace(old, new)
 
             # 変更を新しいPDFファイルに保存
             # output_word = "./output/output.docx"
