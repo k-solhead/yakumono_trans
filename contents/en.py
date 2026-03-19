@@ -1,10 +1,36 @@
 import streamlit as st
 import docx
+from docx.enum.text import WD_COLOR_INDEX
 from io import BytesIO
 import os
 import re
+import unicodedata
+
+def zen_to_han(char):
+    """全角英数記号を半角に変換"""
+    cp = ord(char)
+    # 全角英数記号 (FF01-FF5E) → 半角 (0021-007E)
+    if 0xFF01 <= cp <= 0xFF5E:
+        return chr(cp - 0xFEE0)
+    # 全角スペース → 半角スペース
+    if cp == 0x3000:
+        return ' '
+    return char
+
+def normalize_url_email(text):
+    """URL・メールアドレス内の全角文字を半角に変換"""
+    # URL（全角文字混在対応）
+    url_pattern = r'[\uFF48\uFF28hH][\uFF54\uFF34tT][\uFF54\uFF34tT][\uFF50\uFF30pP][\uFF53\uFF33sS]?[\uFF1A：:][\uFF0F／/][\uFF0F／/][^\s\u3000]+'
+    # メールアドレス（全角文字混在対応）
+    email_pattern = r'[\w\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19][\w.\-\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19\uFF0E\uFF0D]*[\uFF20@][\w\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19][\w.\-\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19\uFF0E\uFF0D]*'
+    combined = f'({url_pattern})|({email_pattern})'
+    def replace_match(m):
+        return ''.join(zen_to_han(c) for c in m.group(0))
+    return re.sub(combined, replace_match, text)
 
 output_word = "./output/output.docx"
+os.makedirs(os.path.dirname(output_word), exist_ok=True)
+
 replacement = {
     '\u3000':'\u0020',      # 全角空白を半角空白へ
     '\u30FB':'\u2022',      # 中黒をビュレットに変換
@@ -104,18 +130,16 @@ replacement = {
     '\uFF5E':'\u007E',      # ~
     '\u33A1':'m2',          # 機種依存文字（平方メートル）
     '\u33A5':'m3',          # 機種依存文字（立法メートル）
-    '\ ':'¥',
-    '("':'(“',
+    '\\ ':'¥',
+    '("':'("',
     '\\':'¥',
-    "'":"’",
-    '" ':'”\s',
-    ' "':'\s“',
+    "'":"'",
+    '" ':'"\\s',
+    ' "':'\\s"',
     '")':'”)',
     '".':'”.',
     '."':'.”',
     '・\t':'• ',
-    '：／／':'://',
-    'jp／':'jp/',
     ' )':')',
     ' . ':'. ',
     ' , ':', ',
@@ -130,8 +154,6 @@ replacement = {
     "' ":"’ ",
     ' 、':'、',
     '。 ':'。',
-    'com／':'com/',
-    'net／':'net/',
     ' 年':'年',
     ' 日':'日',
     ' 月':'月',
@@ -155,9 +177,6 @@ replacement = {
     '） ':'）',
     '( ':'(',
     ' "':' “',
-    'http：//':'http://',
-    '：//':'://',
-    'https：':'https:',
     '」 ':'」',
     ' 「':'「',
     '］ ':'］',
@@ -172,8 +191,8 @@ replacement = {
     '$ ':'$',
     '➢':'>',
     '\u3000\t':'\t',
-    '\s\\':'\s¥',
-    '\s\s\s':'\s',
+    '\\s\\':'\\s¥',
+    '\\s\\s\\s':'\\s',
     '\t\\':'\t¥',
 }
 
@@ -190,8 +209,12 @@ if option == "テキスト文書":
     if st.button("実行する"):    
         try:
             text = st.session_state.text
+            text = normalize_url_email(text)
             for old,new in replacement.items():
                 text = text.replace(old, new)
+            text = re.sub(r'(?<!\s)\(', r' (', text)
+            text = re.sub(r'\)(?!\s)', r') ', text)
+            text = re.sub(r':(?![/\s])', r': ', text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -216,17 +239,42 @@ else:
         try:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
-            # re.DOTALL は改行を含む任意のマッチングを可能にする場合に有用
-            pattern = re.compile(r'\.\s+', re.DOTALL)
             for para in doc.paragraphs:
-                # Run単位で置換して書式を保持
+                # Run単位の処理：太字・斜体のハイライト
                 for run in para.runs:
-                    t = re.sub(pattern, '.', run.text)
-                    for old, new in replacement.items():
-                        t = t.replace(old, new)
-                    run.text = t
-                if para.style.name == 'List Bullet' or para.style.name == 'List Number':
-                    para.style = 'Normal'
+                    if run.bold:
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                    if run.italic:
+                        run.font.highlight_color = WD_COLOR_INDEX.PINK
+
+                # Para単位の処理：テキスト置換
+                full_text = para.text
+                full_text = normalize_url_email(full_text)
+                for old, new in replacement.items():
+                    full_text = full_text.replace(old, new)
+                full_text = re.sub(r'(?<!\s)\(', r' (', full_text)
+                full_text = re.sub(r'\)(?!\s)', r') ', full_text)
+                full_text = re.sub(r':(?![/\s])', r': ', full_text)
+
+                # パラグラフのテキストを更新
+                for run in para.runs:
+                    run.text = ''
+                if para.runs:
+                    para.runs[0].text = full_text
+
+                # 箇条書きスタイルの解除とビュレット挿入
+                is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
+                    '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr') is not None
+                if is_list:
+                    if para.runs:
+                        para.runs[0].text = '• ' + para.runs[0].text
+                    # numPr（ナンバリング属性）を削除して箇条書き設定を解除
+                    if para._element.pPr is not None:
+                        numPr = para._element.pPr.find(
+                            '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr')
+                        if numPr is not None:
+                            para._element.pPr.remove(numPr)
+                    para.style = doc.styles['Normal']
 
             # 変更を新しいPDFファイルに保存
             doc.save(output_word)

@@ -1,18 +1,97 @@
 
 import streamlit as st
 import docx
+from docx.enum.text import WD_COLOR_INDEX
 from io import BytesIO
 import os
 import re
 
+def zen_to_han(char):
+    """全角英数記号を半角に変換"""
+    cp = ord(char)
+    # 全角英数記号 (FF01-FF5E) → 半角 (0021-007E)
+    if 0xFF01 <= cp <= 0xFF5E:
+        return chr(cp - 0xFEE0)
+    # 全角スペース → 半角スペース
+    if cp == 0x3000:
+        return ' '
+    return char
+
+def normalize_url_email(text):
+    """URL・メールアドレス内の全角文字を半角に変換"""
+    # URL（全角文字混在対応）
+    url_pattern = r'[\uFF48\uFF28hH][\uFF54\uFF34tT][\uFF54\uFF34tT][\uFF50\uFF30pP][\uFF53\uFF33sS]?[\uFF1A：:][\uFF0F／/][\uFF0F／/][^\s\u3000]+'
+    # メールアドレス（全角文字混在対応）
+    email_pattern = r'[\w\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19][\w.\-\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19\uFF0E\uFF0D]*[\uFF20@][\w\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19][\w.\-\uFF21-\uFF3A\uFF41-\uFF5A\uFF10-\uFF19\uFF0E\uFF0D]*'
+    combined = f'({url_pattern})|({email_pattern})'
+    def replace_match(m):
+        return ''.join(zen_to_han(c) for c in m.group(0))
+    return re.sub(combined, replace_match, text)
+
+# URLパターン（半角化後）
+_url_re = re.compile(r'https?://[^\s\u3000]+')
+
+def protect_urls(text, func):
+    """テキスト中のURLを一時的にプレースホルダーに置き、funcを適用後に復元"""
+    urls = []
+    def save(m):
+        urls.append(m.group(0))
+        return f'\x00URL{len(urls)-1}\x00'
+    text = _url_re.sub(save, text)
+    text = func(text)
+    for i, url in enumerate(urls):
+        text = text.replace(f'\x00URL{i}\x00', url)
+    return text
+
+def apply_slash_colon(text):
+    """/→／、:→：を変換（URL外）"""
+    text = text.replace('/', '\uff0f')
+    text = text.replace(':', '\uff1a')
+    return text
+
+# ※/＊/*+数字パターン（ハイライト対象）
+note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
+
+def apply_highlight_runs(para, text):
+    """テキスト中の※/*/＊+数字パターンを別runに分けてハイライトする"""
+    for run in para.runs:
+        run.text = ''
+    matches = list(note_pattern.finditer(text))
+    if not matches:
+        if para.runs:
+            para.runs[0].text = text
+        return
+    last_end = 0
+    first = True
+    for m in matches:
+        before = text[last_end:m.start()]
+        if before:
+            if first and para.runs:
+                para.runs[0].text = before
+                first = False
+            else:
+                para.add_run(before)
+        highlight_run = para.add_run(m.group(0))
+        highlight_run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
+        if first:
+            first = False
+        last_end = m.end()
+    remaining = text[last_end:]
+    if remaining:
+        if first and para.runs:
+            para.runs[0].text = remaining
+        else:
+            para.add_run(remaining)
+
 output_word = "./output/output.docx"
+os.makedirs(os.path.dirname(output_word), exist_ok=True)
+
 replacement = {
-    '/':'／',		# 半角スラッシュを全角に
     '\u0021':'\uFF01',      # !　(全角)
     '\u0022':'\uFF02',      # "　(全角)
     '\u0023':'\uFF03',      # #　(全角)
     '\u0024':'\uFF04',      # $　(全角)
-    '\u0025':'\uFF05',      # %　(全角)
+    '\uFF05':'\u0025',      # %　(全角→半角)
     '\u0026':'\uFF06',      # &　(全角)
     '\u0027':'\uFF07',      # '　(全角)
     '\u0028':'\uFF08',      # (　(全角)
@@ -22,7 +101,6 @@ replacement = {
     '\uFF0C':'\u002C',      # ,　(半角)　位取りのコンマ
     '\u002D':'\uFF0D',      # -　(全角)
     '\uFF0E':'\u002E',      # .　(半角)　小数点
-    '\u002F':'\uFF0F',      # /　(全角)
     '\uFF10':'\u0030',      # 0　(半角)
     '\uFF11':'\u0031',      # 1　(半角)
     '\uFF12':'\u0032',      # 2　(半角)
@@ -33,7 +111,6 @@ replacement = {
     '\uFF17':'\u0037',      # 7　(半角)
     '\uFF18':'\u0038',      # 8　(半角)
     '\uFF19':'\u0039',      # 9　(半角)
-    '\u003A':'\uFF1A',      # :　(全角)
     '\u003B':'\uFF1B',      # ;　(全角)
     '\u003C':'\uFF1C',      # <　(全角)
     '\u003D':'\uFF1D',      # =　(全角)
@@ -114,8 +191,6 @@ replacement = {
     '".':'”.',
     '."':'.”',
     '・\t':'• ',
-    '：／／':'://',
-    'jp／':'jp/',
     ' )':')',
     ' . ':'. ',
     ' , ':', ',
@@ -130,8 +205,6 @@ replacement = {
     "' ":"’ ",
     ' 、':'、',
     '。 ':'。',
-    'com／':'com/',
-    'net／':'net/',
     ' 年':'年',
     ' 日':'日',
     ' 月':'月',
@@ -155,9 +228,6 @@ replacement = {
     '） ':'）',
     '( ':'(',
     ' "':' “',
-    'http：//':'http://',
-    '：//':'://',
-    'https：':'https:',
     '」 ':'」',
     ' 「':'「',
     '］ ':'］',
@@ -190,8 +260,11 @@ if option == "テキスト文書":
     if st.button("実行する"):    
         try:
             text = st.session_state.text
+            text = normalize_url_email(text)
             for old,new in replacement.items():
                 text = text.replace(old, new)
+            text = protect_urls(text, apply_slash_colon)
+            text = re.sub(r'\s*(\d+)\s*', r'\1', text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -219,8 +292,34 @@ else:
             for para in doc.paragraphs:
                 # Run単位で置換して書式を保持
                 for run in para.runs:
-                    for old, new in replacement.items():
-                        run.text = run.text.replace(old, new)
+                    if run.bold:
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                    if run.italic:
+                        run.font.highlight_color = WD_COLOR_INDEX.PINK
+                    # Para単位の処理：テキスト置換
+                full_text = para.text
+                full_text = normalize_url_email(full_text)
+                for old, new in replacement.items():
+                    full_text = full_text.replace(old, new)
+                full_text = protect_urls(full_text, apply_slash_colon)
+                full_text = re.sub(r'\s*(\d+)\s*', r'\1', full_text)
+
+                # パラグラフのテキストを更新（※/*+数字をハイライト）
+                apply_highlight_runs(para, full_text)
+
+                # 箇条書きスタイルの解除とビュレット挿入
+                is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
+                    '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr') is not None
+                if is_list:
+                    if para.runs:
+                        para.runs[0].text = '• ' + para.runs[0].text
+                    # numPr（ナンバリング属性）を削除して箇条書き設定を解除
+                    if para._element.pPr is not None:
+                        numPr = para._element.pPr.find(
+                            '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr')
+                        if numPr is not None:
+                            para._element.pPr.remove(numPr)
+                    para.style = doc.styles['Normal']
 
             # 変更を新しいPDFファイルに保存
             # output_word = "./output/output.docx"
