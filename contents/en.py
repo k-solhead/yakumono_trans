@@ -240,27 +240,20 @@ else:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
             for para in doc.paragraphs:
-                # Run単位の処理：太字・斜体のハイライト
+                # Run単位の処理：テキスト置換 + 太字・斜体のハイライト
                 for run in para.runs:
+                    t = run.text
+                    t = normalize_url_email(t)
+                    for old, new in replacement.items():
+                        t = t.replace(old, new)
+                    t = re.sub(r'(?<!\s)\(', r' (', t)
+                    t = re.sub(r'\)(?!\s)', r') ', t)
+                    t = re.sub(r':(?![/\s])', r': ', t)
+                    run.text = t
                     if run.bold:
                         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                     if run.italic:
                         run.font.highlight_color = WD_COLOR_INDEX.PINK
-
-                # Para単位の処理：テキスト置換
-                full_text = para.text
-                full_text = normalize_url_email(full_text)
-                for old, new in replacement.items():
-                    full_text = full_text.replace(old, new)
-                full_text = re.sub(r'(?<!\s)\(', r' (', full_text)
-                full_text = re.sub(r'\)(?!\s)', r') ', full_text)
-                full_text = re.sub(r':(?![/\s])', r': ', full_text)
-
-                # パラグラフのテキストを更新
-                for run in para.runs:
-                    run.text = ''
-                if para.runs:
-                    para.runs[0].text = full_text
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(

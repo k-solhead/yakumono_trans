@@ -28,14 +28,15 @@ def normalize_url_email(text):
         return ''.join(zen_to_han(c) for c in m.group(0))
     return re.sub(combined, replace_match, text)
 
-# URLパターン（半角化後）
-_url_re = re.compile(r'https?://[^\s\u3000]+')
+# URLパターン（全角スラッシュ・コロン混在対応）
+_url_re = re.compile(r'https?[:\uFF1A][/\uFF0F]{2}[^\s\u3000]+')
 
 def protect_urls(text, func):
-    """テキスト中のURLを一時的にプレースホルダーに置き、funcを適用後に復元"""
+    """テキスト中のURLを一時的にプレースホルダーに置き、funcを適用後に復元。URL内の全角スラッシュ・コロンは半角に変換"""
     urls = []
     def save(m):
-        urls.append(m.group(0))
+        url = m.group(0).replace('\uFF0F', '/').replace('\uFF1A', ':')
+        urls.append(url)
         return f'\x00URL{len(urls)-1}\x00'
     text = _url_re.sub(save, text)
     text = func(text)
@@ -52,36 +53,49 @@ def apply_slash_colon(text):
 # ※/＊/*+数字パターン（ハイライト対象）
 note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
 
-def apply_highlight_runs(para, text):
-    """テキスト中の※/*/＊+数字パターンを別runに分けてハイライトする"""
+def apply_note_highlight_per_run(para):
+    """各run内の※/*/＊+数字パターンを別runに分けてハイライトする（run書式を保持）"""
+    if not any(note_pattern.search(run.text) for run in para.runs):
+        return
+    new_runs_data = []
+    for run in para.runs:
+        text = run.text
+        is_bold = run.bold
+        is_italic = run.italic
+        cur_highlight = run.font.highlight_color
+        matches = list(note_pattern.finditer(text))
+        if not matches:
+            if text:
+                new_runs_data.append((text, is_bold, is_italic, cur_highlight))
+            continue
+        last_end = 0
+        for m in matches:
+            before = text[last_end:m.start()]
+            if before:
+                new_runs_data.append((before, is_bold, is_italic, cur_highlight))
+            new_runs_data.append((m.group(0), is_bold, is_italic, WD_COLOR_INDEX.TURQUOISE))
+            last_end = m.end()
+        remaining = text[last_end:]
+        if remaining:
+            new_runs_data.append((remaining, is_bold, is_italic, cur_highlight))
     for run in para.runs:
         run.text = ''
-    matches = list(note_pattern.finditer(text))
-    if not matches:
-        if para.runs:
-            para.runs[0].text = text
+    if not new_runs_data:
         return
-    last_end = 0
-    first = True
-    for m in matches:
-        before = text[last_end:m.start()]
-        if before:
-            if first and para.runs:
-                para.runs[0].text = before
-                first = False
-            else:
-                para.add_run(before)
-        highlight_run = para.add_run(m.group(0))
-        highlight_run.font.highlight_color = WD_COLOR_INDEX.TURQUOISE
-        if first:
-            first = False
-        last_end = m.end()
-    remaining = text[last_end:]
-    if remaining:
-        if first and para.runs:
-            para.runs[0].text = remaining
-        else:
-            para.add_run(remaining)
+    if para.runs:
+        text, is_bold, is_italic, highlight = new_runs_data[0]
+        r = para.runs[0]
+        r.text = text
+        r.bold = is_bold
+        r.italic = is_italic
+        if highlight is not None:
+            r.font.highlight_color = highlight
+    for text, is_bold, is_italic, highlight in new_runs_data[1:]:
+        new_r = para.add_run(text)
+        new_r.bold = is_bold
+        new_r.italic = is_italic
+        if highlight is not None:
+            new_r.font.highlight_color = highlight
 
 output_word = "./output/output.docx"
 os.makedirs(os.path.dirname(output_word), exist_ok=True)
@@ -290,22 +304,34 @@ else:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
             for para in doc.paragraphs:
-                # Run単位で置換して書式を保持
+                # Run単位の処理：テキスト置換 + 数字前後空白除去
+                for run in para.runs:
+                    t = run.text
+                    for old, new in replacement.items():
+                        t = t.replace(old, new)
+                    t = re.sub(r'\s*(\d+)\s*', r'\1', t)
+                    run.text = t
+
+                # 段落全体でURL正規化 + スラッシュ・コロン変換（URL跨ぎrun対応）
+                if para.runs:
+                    full_text = ''.join(run.text for run in para.runs)
+                    full_text = normalize_url_email(full_text)
+                    full_text = protect_urls(full_text, apply_slash_colon)
+                    idx = 0
+                    for run in para.runs:
+                        run_len = len(run.text)
+                        run.text = full_text[idx:idx + run_len]
+                        idx += run_len
+
+                # Run単位の太字・斜体ハイライト
                 for run in para.runs:
                     if run.bold:
                         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                     if run.italic:
                         run.font.highlight_color = WD_COLOR_INDEX.PINK
-                    # Para単位の処理：テキスト置換
-                full_text = para.text
-                full_text = normalize_url_email(full_text)
-                for old, new in replacement.items():
-                    full_text = full_text.replace(old, new)
-                full_text = protect_urls(full_text, apply_slash_colon)
-                full_text = re.sub(r'\s*(\d+)\s*', r'\1', full_text)
 
-                # パラグラフのテキストを更新（※/*+数字をハイライト）
-                apply_highlight_runs(para, full_text)
+                # ※/*+数字パターンのハイライト（run単位で処理）
+                apply_note_highlight_per_run(para)
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
