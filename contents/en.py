@@ -213,7 +213,7 @@ if option == "テキスト文書":
             for old,new in replacement.items():
                 text = text.replace(old, new)
             text = re.sub(r'(?<!\s)\(', r' (', text)
-            text = re.sub(r'\)(?!\s)', r') ', text)
+            text = re.sub(r'\)(?!\s|.|,)', r') ', text)
             text = re.sub(r':(?![/\s])', r': ', text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
