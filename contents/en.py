@@ -247,7 +247,7 @@ else:
                     for old, new in replacement.items():
                         t = t.replace(old, new)
                     t = re.sub(r'(?<!\s)\(', r' (', t)
-                    t = re.sub(r'\)(?!\s)', r') ', t)
+                    t = re.sub(r'\)(?!\s|.|,)', r') ', t)
                     t = re.sub(r':(?![/\s])', r': ', t)
                     run.text = t
                     if run.bold:
