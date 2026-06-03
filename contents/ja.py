@@ -2,9 +2,59 @@
 import streamlit as st
 import docx
 from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt
+from docx.text.run import Run
+from copy import deepcopy
 from io import BytesIO
 import os
 import re
+
+def set_run_text_preserve_images(run, new_text):
+    """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
+
+    通常の`run.text = ...`はrun内の全子要素を一度削除して<w:t>を追加するため、
+    画像（<w:drawing>/<w:pict>）が失われる。ここでは<w:t>要素のテキストのみを更新する。
+    """
+    r = run._r
+    t_elements = r.findall(qn('w:t'))
+    control_tags = {qn('w:br'), qn('w:cr'), qn('w:tab')}
+    has_controls = any(child.tag in control_tags for child in r)
+
+    if t_elements and has_controls:
+        text_index = 0
+        cursor = 0
+
+        for child in r:
+            if child.tag == qn('w:t'):
+                start = cursor
+                while cursor < len(new_text) and new_text[cursor] not in '\n\r\t':
+                    cursor += 1
+                child.text = new_text[start:cursor]
+                child.set(qn('xml:space'), 'preserve')
+                text_index += 1
+            elif child.tag in {qn('w:br'), qn('w:cr')}:
+                if cursor < len(new_text) and new_text[cursor] == '\r':
+                    cursor += 1
+                if cursor < len(new_text) and new_text[cursor] == '\n':
+                    cursor += 1
+            elif child.tag == qn('w:tab'):
+                if cursor < len(new_text) and new_text[cursor] == '\t':
+                    cursor += 1
+
+        for t in t_elements[text_index:]:
+            t.text = ''
+    elif t_elements:
+        t_elements[0].text = new_text
+        t_elements[0].set(qn('xml:space'), 'preserve')
+        for t in t_elements[1:]:
+            t.text = ''
+    elif new_text:
+        t = OxmlElement('w:t')
+        t.text = new_text
+        t.set(qn('xml:space'), 'preserve')
+        r.append(t)
 
 def zen_to_han(char):
     """全角英数記号を半角に変換"""
@@ -50,57 +100,186 @@ def apply_slash_colon(text):
     text = text.replace(':', '\uff1a')
     return text
 
+def strip_line_head_spaces(text):
+    """各行の先頭に混入した空白を除去する。"""
+    return re.sub(r'(^|\r?\n)[ \u00A0\u3000\t]+', r'\1', text)
+
+def strip_spaces_around_numbers(text):
+    """数字前後の空白を除去しつつ、※/＊/*+数字の直後の半角スペースは保持する。"""
+    protected_spaces = []
+
+    def protect_note_space(match):
+        protected_spaces.append(match.group(0))
+        return f'\x00NOTE_SPACE{len(protected_spaces) - 1}\x00'
+
+    text = re.sub(r'([\u203B\uFF0A\*][0-9\uFF10-\uFF19]+) ', protect_note_space, text)
+    text = re.sub(r'\s*(\d+)\s*', r'\1', text)
+
+    for index, protected in enumerate(protected_spaces):
+        text = text.replace(f'\x00NOTE_SPACE{index}\x00', protected)
+
+    return text
+
+def apply_run_highlights(para):
+    """ボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
+    dash_highlights = {
+        '—': WD_COLOR_INDEX.BLUE,
+        '–': WD_COLOR_INDEX.VIOLET,
+    }
+
+    for run in list(para.runs):
+        run_text = run.text
+        if not run_text:
+            continue
+
+        current_highlight = run.font.highlight_color
+        base_highlight = current_highlight
+        if run.bold:
+            base_highlight = WD_COLOR_INDEX.BRIGHT_GREEN
+        if run.italic:
+            base_highlight = WD_COLOR_INDEX.RED
+
+        segments = []
+        buffer = []
+        segment_highlight = dash_highlights.get(run_text[0], base_highlight)
+
+        for char in run_text:
+            char_highlight = dash_highlights.get(char, base_highlight)
+            if buffer and char_highlight != segment_highlight:
+                segments.append((''.join(buffer), segment_highlight))
+                buffer = [char]
+                segment_highlight = char_highlight
+                continue
+            buffer.append(char)
+
+        if buffer:
+            segments.append((''.join(buffer), segment_highlight))
+
+        if len(segments) == 1:
+            if segments[0][1] != current_highlight:
+                run.font.highlight_color = segments[0][1]
+            continue
+
+        is_bold = run.bold
+        is_italic = run.italic
+        original_rpr = run._r.find(qn('w:rPr'))
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        text0, highlight0 = segments[0]
+        set_run_text_preserve_images(run, text0)
+        if highlight0 != current_highlight:
+            run.font.highlight_color = highlight0
+
+        prev_r = run._r
+        for seg_text, seg_highlight in segments[1:]:
+            new_r = OxmlElement('w:r')
+            if rpr_template is not None:
+                new_r.append(deepcopy(rpr_template))
+            t = OxmlElement('w:t')
+            t.text = seg_text
+            t.set(qn('xml:space'), 'preserve')
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = Run(new_r, run._parent)
+            wrapped.bold = is_bold
+            wrapped.italic = is_italic
+            if seg_highlight != current_highlight:
+                wrapped.font.highlight_color = seg_highlight
+            prev_r = new_r
+
 # ※/＊/*+数字パターン（ハイライト対象）
 note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
 
 def apply_note_highlight_per_run(para):
-    """各run内の※/*/＊+数字パターンを別runに分けてハイライトする（run書式を保持）"""
-    if not any(note_pattern.search(run.text) for run in para.runs):
+    """段落内の※/＊/*+数字パターンをハイライトする。
+
+    パターンがrunをまたぐ場合（数字部分がWordの上付き/下付きで別runになるなど）も対応するため、
+    段落全体のテキストでマッチを取り、各runの該当部分のみをREDハイライトに切り出す。
+    画像runの位置は保ち、ハイライトはマッチ部分のみに限定する（後続文字や次run・段落に波及させない）。
+    """
+    if not para.runs:
         return
-    new_runs_data = []
+    # 各runの段落全体テキスト中での位置を記録
+    run_info = []  # (run, start, end)
+    cursor = 0
     for run in para.runs:
-        text = run.text
+        rt = run.text
+        run_info.append((run, cursor, cursor + len(rt)))
+        cursor += len(rt)
+    full_text = ''.join(r.text for r, _, _ in run_info)
+
+    matches = list(note_pattern.finditer(full_text))
+    if not matches:
+        return
+
+    # 各runについて、自身に重なるマッチ部分（local座標）を集める
+    for run, r_start, r_end in run_info:
+        if r_start == r_end:
+            continue  # 空run（画像runなど）はスキップ
+        intersects = []
+        for m in matches:
+            i_start = max(m.start(), r_start)
+            i_end = min(m.end(), r_end)
+            if i_start < i_end:
+                intersects.append((i_start - r_start, i_end - r_start))
+        if not intersects:
+            continue
+
+        run_text = full_text[r_start:r_end]
         is_bold = run.bold
         is_italic = run.italic
         cur_highlight = run.font.highlight_color
-        matches = list(note_pattern.finditer(text))
-        if not matches:
-            if text:
-                new_runs_data.append((text, is_bold, is_italic, cur_highlight))
-            continue
+        # rPrのテンプレートは「修正前」の状態を必ず deepcopy で確保する。
+        # （後で run.font.highlight_color を上書きすると元のrPrが書き換わり、
+        #  新run作成時にハイライトが波及してしまうため）
+        original_rpr = run._r.find(qn('w:rPr'))
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        # セグメント生成: [非マッチ, マッチ, 非マッチ, ...] の順に
+        segments = []
         last_end = 0
-        for m in matches:
-            before = text[last_end:m.start()]
+        for ls, le in intersects:
+            before = run_text[last_end:ls]
             if before:
-                new_runs_data.append((before, is_bold, is_italic, cur_highlight))
-            new_runs_data.append((m.group(0), is_bold, is_italic, WD_COLOR_INDEX.TURQUOISE))
-            last_end = m.end()
-        remaining = text[last_end:]
+                segments.append((before, cur_highlight))
+            segments.append((run_text[ls:le], WD_COLOR_INDEX.RED))
+            last_end = le
+        remaining = run_text[last_end:]
         if remaining:
-            new_runs_data.append((remaining, is_bold, is_italic, cur_highlight))
-    for run in para.runs:
-        run.text = ''
-    if not new_runs_data:
-        return
-    if para.runs:
-        text, is_bold, is_italic, highlight = new_runs_data[0]
-        r = para.runs[0]
-        r.text = text
-        r.bold = is_bold
-        r.italic = is_italic
-        if highlight is not None:
-            r.font.highlight_color = highlight
-    for text, is_bold, is_italic, highlight in new_runs_data[1:]:
-        new_r = para.add_run(text)
-        new_r.bold = is_bold
-        new_r.italic = is_italic
-        if highlight is not None:
-            new_r.font.highlight_color = highlight
+            segments.append((remaining, cur_highlight))
+        if not segments:
+            continue
+
+        # 先頭セグメントは既存runを書き換え（テキストとハイライトのみ）
+        text0, highlight0 = segments[0]
+        set_run_text_preserve_images(run, text0)
+        if highlight0 != cur_highlight:
+            run.font.highlight_color = highlight0
+        # 残りは元runの直後にXMLレベルで挿入し、書式は rpr_template から継承
+        prev_r = run._r
+        for seg_text, seg_highlight in segments[1:]:
+            new_r = OxmlElement('w:r')
+            if rpr_template is not None:
+                new_r.append(deepcopy(rpr_template))
+            t = OxmlElement('w:t')
+            t.text = seg_text
+            t.set(qn('xml:space'), 'preserve')
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = Run(new_r, run._parent)
+            wrapped.bold = is_bold
+            wrapped.italic = is_italic
+            # 元runのハイライトと異なる場合のみ明示設定（同じなら rpr_template の値を尊重）
+            if seg_highlight != cur_highlight:
+                wrapped.font.highlight_color = seg_highlight
+            prev_r = new_r
 
 output_word = "./output/output.docx"
 os.makedirs(os.path.dirname(output_word), exist_ok=True)
 
 replacement = {
+    '  ':'',       # NBSP + 半角空白 を除去（行冒頭等への混入対策）
+    ' ':'',              # 単独NBSPも除去
     '\u0021':'\uFF01',      # !　(全角)
     '\u0022':'\uFF02',      # "　(全角)
     '\u0023':'\uFF03',      # #　(全角)
@@ -195,12 +374,12 @@ replacement = {
     '\u007E':'\uFF5E',      # ~　(全角)
     '\u33A1':'m2',          # 機種依存文字（平方メートル）
     '\u33A5':'m3',          # 機種依存文字（立法メートル）
-    '\ ':'¥',
+    '\\ ':'¥',
     '("':'(“',
     '\\':'¥',
     "'":"’",
-    '" ':'”\s',
-    ' "':'\s“',
+    '" ':'”\\s',
+    ' "':'\\s“',
     '")':'”)',
     '".':'”.',
     '."':'.”',
@@ -256,8 +435,8 @@ replacement = {
     '$ ':'$',
     '➢':'>',
     '\u3000\t':'\t',
-    '\s\\':'\s¥',
-    '\s\s\s':'\s',
+    '\\s\\':'\\s¥',
+    '\\s\\s\\s':'\\s',
     '\t\\':'\t¥',
 }
 
@@ -279,6 +458,7 @@ if option == "テキスト文書":
                 text = text.replace(old, new)
             text = protect_urls(text, apply_slash_colon)
             text = re.sub(r'\s*(\d+)\s*', r'\1', text)
+            text = strip_line_head_spaces(text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -304,31 +484,50 @@ else:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
             for para in doc.paragraphs:
-                # Run単位の処理：テキスト置換 + 数字前後空白除去
+                para.paragraph_format.left_indent = Pt(0)
+                para.paragraph_format.first_line_indent = Pt(0)
+
+                # 段落先頭の NBSP(U+00A0) と続く空白を除去（最初のテキストrunに対して）
+                for r in para.runs:
+                    if r.text:
+                        stripped = re.sub('^ [  ]*', '', r.text)
+                        if stripped != r.text:
+                            set_run_text_preserve_images(r, stripped)
+                        break
+
+                # Run単位の処理：テキスト置換 + 数字前後空白除去（画像は保持）
                 for run in para.runs:
                     t = run.text
                     for old, new in replacement.items():
                         t = t.replace(old, new)
-                    t = re.sub(r'\s*(\d+)\s*', r'\1', t)
-                    run.text = t
+                    t = strip_spaces_around_numbers(t)
+                    set_run_text_preserve_images(run, t)
 
                 # 段落全体でURL正規化 + スラッシュ・コロン変換（URL跨ぎrun対応）
                 if para.runs:
                     full_text = ''.join(run.text for run in para.runs)
                     full_text = normalize_url_email(full_text)
                     full_text = protect_urls(full_text, apply_slash_colon)
+                    full_text = strip_line_head_spaces(full_text)
                     idx = 0
                     for run in para.runs:
                         run_len = len(run.text)
-                        run.text = full_text[idx:idx + run_len]
+                        set_run_text_preserve_images(run, full_text[idx:idx + run_len])
                         idx += run_len
 
-                # Run単位の太字・斜体ハイライト
-                for run in para.runs:
-                    if run.bold:
-                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                    if run.italic:
-                        run.font.highlight_color = WD_COLOR_INDEX.PINK
+                # 行頭（段落先頭・改行後）の先頭空白（NBSP・半角スペース）を除去
+                _at_line_start = True
+                for _elem in para._element.iter():
+                    if _elem.tag == qn('w:br'):
+                        _at_line_start = True
+                    elif _elem.tag == qn('w:t') and _elem.text:
+                        if _at_line_start:
+                            _elem.text = _elem.text.lstrip('  	\u3000')
+                        if _elem.text:
+                            _at_line_start = False
+
+                # Run単位のボールド・斜体・ダッシュハイライト
+                apply_run_highlights(para)
 
                 # ※/*+数字パターンのハイライト（run単位で処理）
                 apply_note_highlight_per_run(para)
@@ -338,7 +537,7 @@ else:
                     '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr') is not None
                 if is_list:
                     if para.runs:
-                        para.runs[0].text = '• ' + para.runs[0].text
+                        set_run_text_preserve_images(para.runs[0], '• ' + para.runs[0].text)
                     # numPr（ナンバリング属性）を削除して箇条書き設定を解除
                     if para._element.pPr is not None:
                         numPr = para._element.pPr.find(

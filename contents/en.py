@@ -1,10 +1,33 @@
 import streamlit as st
 import docx
 from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.text.run import Run
+from copy import deepcopy
 from io import BytesIO
 import os
 import re
 import unicodedata
+
+def set_run_text_preserve_images(run, new_text):
+    """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
+
+    通常の`run.text = ...`はrun内の全子要素を一度削除して<w:t>を追加するため、
+    画像（<w:drawing>/<w:pict>）が失われる。ここでは<w:t>要素のテキストのみを更新する。
+    """
+    r = run._r
+    t_elements = r.findall(qn('w:t'))
+    if t_elements:
+        t_elements[0].text = new_text
+        t_elements[0].set(qn('xml:space'), 'preserve')
+        for t in t_elements[1:]:
+            t.text = ''
+    elif new_text:
+        t = OxmlElement('w:t')
+        t.text = new_text
+        t.set(qn('xml:space'), 'preserve')
+        r.append(t)
 
 def zen_to_han(char):
     """全角英数記号を半角に変換"""
@@ -27,6 +50,73 @@ def normalize_url_email(text):
     def replace_match(m):
         return ''.join(zen_to_han(c) for c in m.group(0))
     return re.sub(combined, replace_match, text)
+
+def apply_run_highlights(para):
+    """ボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
+    dash_highlights = {
+        '—': WD_COLOR_INDEX.BLUE,
+        '–': WD_COLOR_INDEX.VIOLET,
+    }
+
+    for run in list(para.runs):
+        run_text = run.text
+        if not run_text:
+            continue
+
+        current_highlight = run.font.highlight_color
+        base_highlight = current_highlight
+        if run.bold:
+            base_highlight = WD_COLOR_INDEX.BRIGHT_GREEN
+        if run.italic:
+            base_highlight = WD_COLOR_INDEX.RED
+
+        segments = []
+        buffer = []
+        segment_highlight = dash_highlights.get(run_text[0], base_highlight)
+
+        for char in run_text:
+            char_highlight = dash_highlights.get(char, base_highlight)
+            if buffer and char_highlight != segment_highlight:
+                segments.append((''.join(buffer), segment_highlight))
+                buffer = [char]
+                segment_highlight = char_highlight
+                continue
+            buffer.append(char)
+
+        if buffer:
+            segments.append((''.join(buffer), segment_highlight))
+
+        if len(segments) == 1:
+            if segments[0][1] != current_highlight:
+                run.font.highlight_color = segments[0][1]
+            continue
+
+        is_bold = run.bold
+        is_italic = run.italic
+        original_rpr = run._r.find(qn('w:rPr'))
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        text0, highlight0 = segments[0]
+        set_run_text_preserve_images(run, text0)
+        if highlight0 != current_highlight:
+            run.font.highlight_color = highlight0
+
+        prev_r = run._r
+        for seg_text, seg_highlight in segments[1:]:
+            new_r = OxmlElement('w:r')
+            if rpr_template is not None:
+                new_r.append(deepcopy(rpr_template))
+            t = OxmlElement('w:t')
+            t.text = seg_text
+            t.set(qn('xml:space'), 'preserve')
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = Run(new_r, run._parent)
+            wrapped.bold = is_bold
+            wrapped.italic = is_italic
+            if seg_highlight != current_highlight:
+                wrapped.font.highlight_color = seg_highlight
+            prev_r = new_r
 
 output_word = "./output/output.docx"
 os.makedirs(os.path.dirname(output_word), exist_ok=True)
@@ -240,7 +330,7 @@ else:
             # python-docxでWordドキュメントを開く
             doc = docx.Document(doc_file)
             for para in doc.paragraphs:
-                # Run単位の処理：テキスト置換 + 太字・斜体のハイライト
+                # Run単位の処理：テキスト置換 + 太字・斜体のハイライト（画像は保持）
                 for run in para.runs:
                     t = run.text
                     t = normalize_url_email(t)
@@ -249,18 +339,16 @@ else:
                     t = re.sub(r'(?<!\s)\(', r' (', t)
                     t = re.sub(r'\)(?!\s|.|,)', r') ', t)
                     t = re.sub(r':(?![/\s])', r': ', t)
-                    run.text = t
-                    if run.bold:
-                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                    if run.italic:
-                        run.font.highlight_color = WD_COLOR_INDEX.PINK
+                    set_run_text_preserve_images(run, t)
+
+                apply_run_highlights(para)
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
                     '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numPr') is not None
                 if is_list:
                     if para.runs:
-                        para.runs[0].text = '• ' + para.runs[0].text
+                        set_run_text_preserve_images(para.runs[0], '• ' + para.runs[0].text)
                     # numPr（ナンバリング属性）を削除して箇条書き設定を解除
                     if para._element.pPr is not None:
                         numPr = para._element.pPr.find(
