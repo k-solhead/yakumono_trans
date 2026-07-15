@@ -305,6 +305,7 @@ if option == "テキスト文書":
             text = re.sub(r'(?<!\s)\(', r' (', text)
             text = re.sub(r'\)(?!\s|.|,)', r') ', text)
             text = re.sub(r':(?![/\s])', r': ', text)
+            text = re.sub(r'[ ]+(\r?\n)', r'\1', text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -342,6 +343,16 @@ else:
                     set_run_text_preserve_images(run, t)
 
                 apply_run_highlights(para)
+
+                # 改行前の半角空白を削除（w:br直前のw:t末尾スペース除去）
+                _prev_t = None
+                for _elem in para._element.iter():
+                    if _elem.tag == qn('w:t') and _elem.text:
+                        _prev_t = _elem
+                    elif _elem.tag == qn('w:br') and _prev_t is not None:
+                        stripped = _prev_t.text.rstrip(' \t')
+                        if stripped != _prev_t.text:
+                            _prev_t.text = stripped
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(

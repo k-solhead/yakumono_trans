@@ -459,6 +459,7 @@ if option == "テキスト文書":
             text = protect_urls(text, apply_slash_colon)
             text = re.sub(r'\s*(\d+)\s*', r'\1', text)
             text = strip_line_head_spaces(text)
+            text = re.sub(r'[ ]+(\r?\n)', r'\1', text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -522,9 +523,19 @@ else:
                         _at_line_start = True
                     elif _elem.tag == qn('w:t') and _elem.text:
                         if _at_line_start:
-                            _elem.text = _elem.text.lstrip('  	\u3000')
+                            _elem.text = _elem.text.lstrip('  \t\u3000')
                         if _elem.text:
                             _at_line_start = False
+
+                # 改行前の半角空白を削除（w:br直前のw:t末尾スペース除去）
+                _prev_t = None
+                for _elem in para._element.iter():
+                    if _elem.tag == qn('w:t') and _elem.text:
+                        _prev_t = _elem
+                    elif _elem.tag == qn('w:br') and _prev_t is not None:
+                        stripped = _prev_t.text.rstrip(' \t')
+                        if stripped != _prev_t.text:
+                            _prev_t.text = stripped
 
                 # Run単位のボールド・斜体・ダッシュハイライト
                 apply_run_highlights(para)
