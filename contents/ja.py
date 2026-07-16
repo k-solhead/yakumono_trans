@@ -11,6 +11,15 @@ from io import BytesIO
 import os
 import re
 
+
+# Excel support (openpyxl)
+from openpyxl import load_workbook  # type: ignore  # guarded by FILE_TYPES dropdown when missing
+_HAS_OPENPYXL = True
+try:
+    from openpyxl.utils.exceptions import InvalidFileException  # noqa: F401
+except Exception:  # pragma: no cover - env-dependent fallback
+    _HAS_OPENPYXL = False
+
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
 
@@ -440,34 +449,80 @@ replacement = {
     '\t\\':'\t¥',
 }
 
+def clean_text(text):
+    """プレーンテキスト向け整形パイプライン（ja.py 共通)。
+
+    Word・Excel のセル・テキストエリアのいずれでも同じロジックを適用する。
+    """
+    if not text:
+        return text
+    text = normalize_url_email(text)
+    for old, new in replacement.items():
+        text = text.replace(old, new)
+    text = protect_urls(text, apply_slash_colon)
+    text = re.sub(r"\s*(\d+)\s*", r"\1", text)
+    text = strip_line_head_spaces(text)
+    text = re.sub(r"[ ]+(\r?\n)", r"\1", text)
+    return text
+
 st.title("テキスト整形（和文）")
 st.write("和文フォントの全角・半角への修正や約物の自動変換をします")
 
-option = st.radio("Word文書かテキストか整形対象を選択してください", ("Word文書", "テキスト文書"))
+FILE_TYPES = ("Word文書", "テキスト文書") + (("Excelファイル",) if _HAS_OPENPYXL else ())
+option = st.radio("整形対象を選択してください（Word / テキスト / Excel）", FILE_TYPES)
 
 if option == "テキスト文書":
     if "text" not in st.session_state:
         st.session_state.text = ""
     st.session_state.text = st.text_area("テキストを貼りつけてください", height=300, placeholder="ここに貼りつけてください")
-    
-    if st.button("実行する"):    
+
+    if st.button("実行する"):   
         try:
-            text = st.session_state.text
-            text = normalize_url_email(text)
-            for old,new in replacement.items():
-                text = text.replace(old, new)
-            text = protect_urls(text, apply_slash_colon)
-            text = re.sub(r'\s*(\d+)\s*', r'\1', text)
-            text = strip_line_head_spaces(text)
-            text = re.sub(r'[ ]+(\r?\n)', r'\1', text)
-        
+            text = clean_text(st.session_state.text)
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
                 st.text(text)
-            
         except Exception as e:
             st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
-            
+
+elif option == "Excelファイル":
+    if not _HAS_OPENPYXL:
+        st.error("openpyxl がインストールされていません。")
+    else:
+        uploaded_file = st.file_uploader(
+            "Excelファイル（.xlsx）をアップロード", type=['xlsx'], key="ja_xlsx"
+        )
+
+        def _process_workbook(uploaded):
+            if uploaded is None:
+                return None
+            wb = load_workbook(BytesIO(uploaded.getvalue()))
+            # プレーンテキスト整形をセルの文字列値に対して適用。数式・数字・日付は非破壊的スキップ。
+            from openpyxl.cell.cell import MergedCell  # read-only merged proxies are skipped
+            for ws in wb.worksheets:
+                for row in ws.iter_rows():
+                    for cell in row:
+                        if isinstance(cell, MergedCell):
+                            continue
+                        if isinstance(cell.value, str):
+                            cell.value = clean_text(cell.value)
+            out = BytesIO()
+            wb.save(out)
+            out.seek(0)
+            return out
+
+        wb_buf = _process_workbook(uploaded_file)
+        if wb_buf is not None:
+            file_name = os.path.splitext(uploaded_file.name)[0]
+            st.success("処理が完了しました。")
+            st.download_button(
+                label="Excelファイルをダウンロード",
+                data=wb_buf.getvalue(),
+                file_name=file_name + "_chk.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                on_click="ignore"
+            )
+
 else:
     # st.file_uploaderウィジェットの作成
     # type引数で受け付けるファイルの形式を'.docx'に限定
@@ -523,9 +578,12 @@ else:
                         _at_line_start = True
                     elif _elem.tag == qn('w:t') and _elem.text:
                         if _at_line_start:
-                            _elem.text = _elem.text.lstrip('  \t\u3000')
+                            _elem.text = _elem.text.lstrip('  	　')
                         if _elem.text:
                             _at_line_start = False
+
+                # Run単位のボールド・斜体・ダッシュハイライト
+                apply_run_highlights(para)
 
                 # 改行前の半角空白を削除（w:br直前のw:t末尾スペース除去）
                 _prev_t = None
@@ -533,12 +591,9 @@ else:
                     if _elem.tag == qn('w:t') and _elem.text:
                         _prev_t = _elem
                     elif _elem.tag == qn('w:br') and _prev_t is not None:
-                        stripped = _prev_t.text.rstrip(' \t')
+                        stripped = _prev_t.text.rstrip(' 	')
                         if stripped != _prev_t.text:
                             _prev_t.text = stripped
-
-                # Run単位のボールド・斜体・ダッシュハイライト
-                apply_run_highlights(para)
 
                 # ※/*+数字パターンのハイライト（run単位で処理）
                 apply_note_highlight_per_run(para)
