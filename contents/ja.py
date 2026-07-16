@@ -104,6 +104,23 @@ def strip_line_head_spaces(text):
     """各行の先頭に混入した空白を除去する。"""
     return re.sub(r'(^|\r?\n)[ \u00A0\u3000\t]+', r'\1', text)
 
+def strip_spaces_before_newlines(text):
+    """改行直前の半角スペースを除去する。"""
+    return re.sub(r' +(\r?\n)', r'\1', text)
+
+def strip_run_spaces_before_breaks(para):
+    """Word 段落内の改行直前と段落末尾の半角スペースを除去する。"""
+    last_text_elem = None
+
+    for elem in para._element.iter():
+        if elem.tag == qn('w:t') and elem.text:
+            last_text_elem = elem
+        elif elem.tag in {qn('w:br'), qn('w:cr')} and last_text_elem is not None and last_text_elem.text:
+            last_text_elem.text = last_text_elem.text.rstrip(' ')
+
+    if last_text_elem is not None and last_text_elem.text:
+        last_text_elem.text = last_text_elem.text.rstrip(' ')
+
 def strip_spaces_around_numbers(text):
     """数字前後の空白を除去しつつ、※/＊/*+数字の直後の半角スペースは保持する。"""
     protected_spaces = []
@@ -458,6 +475,7 @@ if option == "テキスト文書":
                 text = text.replace(old, new)
             text = protect_urls(text, apply_slash_colon)
             text = re.sub(r'\s*(\d+)\s*', r'\1', text)
+            text = strip_spaces_before_newlines(text)
             text = strip_line_head_spaces(text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
@@ -531,6 +549,9 @@ else:
 
                 # ※/*+数字パターンのハイライト（run単位で処理）
                 apply_note_highlight_per_run(para)
+
+                # 改行直前と段落末尾の半角スペースを除去
+                strip_run_spaces_before_breaks(para)
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(

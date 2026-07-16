@@ -51,6 +51,23 @@ def normalize_url_email(text):
         return ''.join(zen_to_han(c) for c in m.group(0))
     return re.sub(combined, replace_match, text)
 
+def strip_spaces_before_newlines(text):
+    """改行直前の半角スペースを除去する。"""
+    return re.sub(r' +(\r?\n)', r'\1', text)
+
+def strip_run_spaces_before_breaks(para):
+    """Word 段落内の改行直前と段落末尾の半角スペースを除去する。"""
+    last_text_elem = None
+
+    for elem in para._element.iter():
+        if elem.tag == qn('w:t') and elem.text:
+            last_text_elem = elem
+        elif elem.tag in {qn('w:br'), qn('w:cr')} and last_text_elem is not None and last_text_elem.text:
+            last_text_elem.text = last_text_elem.text.rstrip(' ')
+
+    if last_text_elem is not None and last_text_elem.text:
+        last_text_elem.text = last_text_elem.text.rstrip(' ')
+
 def apply_run_highlights(para):
     """ボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
     dash_highlights = {
@@ -305,6 +322,7 @@ if option == "テキスト文書":
             text = re.sub(r'(?<!\s)\(', r' (', text)
             text = re.sub(r'\)(?!\s|.|,)', r') ', text)
             text = re.sub(r':(?![/\s])', r': ', text)
+            text = strip_spaces_before_newlines(text)
         
             st.success("処理が完了しました。下記テキストをコピペしてください")
             with st.container(border=True):
@@ -342,6 +360,7 @@ else:
                     set_run_text_preserve_images(run, t)
 
                 apply_run_highlights(para)
+                strip_run_spaces_before_breaks(para)
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
