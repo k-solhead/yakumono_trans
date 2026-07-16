@@ -350,7 +350,7 @@ else:
                     if _elem.tag == qn('w:t') and _elem.text:
                         _prev_t = _elem
                     elif _elem.tag == qn('w:br') and _prev_t is not None:
-                        stripped = _prev_t.text.rstrip(' \t')
+                        stripped = _prev_t.text.rstrip(' 	')
                         if stripped != _prev_t.text:
                             _prev_t.text = stripped
 

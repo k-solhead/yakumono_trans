@@ -523,9 +523,12 @@ else:
                         _at_line_start = True
                     elif _elem.tag == qn('w:t') and _elem.text:
                         if _at_line_start:
-                            _elem.text = _elem.text.lstrip('  \t\u3000')
+                            _elem.text = _elem.text.lstrip('  	　')
                         if _elem.text:
                             _at_line_start = False
+
+                # Run単位のボールド・斜体・ダッシュハイライト
+                apply_run_highlights(para)
 
                 # 改行前の半角空白を削除（w:br直前のw:t末尾スペース除去）
                 _prev_t = None
@@ -533,12 +536,9 @@ else:
                     if _elem.tag == qn('w:t') and _elem.text:
                         _prev_t = _elem
                     elif _elem.tag == qn('w:br') and _prev_t is not None:
-                        stripped = _prev_t.text.rstrip(' \t')
+                        stripped = _prev_t.text.rstrip(' 	')
                         if stripped != _prev_t.text:
                             _prev_t.text = stripped
-
-                # Run単位のボールド・斜体・ダッシュハイライト
-                apply_run_highlights(para)
 
                 # ※/*+数字パターンのハイライト（run単位で処理）
                 apply_note_highlight_per_run(para)
