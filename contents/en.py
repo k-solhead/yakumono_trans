@@ -9,6 +9,9 @@ from io import BytesIO
 import os
 import re
 import unicodedata
+import openpyxl
+from openpyxl.styles import PatternFill, Font
+from openpyxl.utils import get_column_letter
 
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
@@ -286,10 +289,38 @@ replacement = {
     '\t\\':'\t¥',
 }
 
+def process_excel_cell(text):
+    """Excelセル用のテキスト処理（改行関連処理を除く）"""
+    text = normalize_url_email(text)
+    for old, new in replacement.items():
+        text = text.replace(old, new)
+    text = re.sub(r'(?<!\s)\(', r' (', text)
+    text = re.sub(r'\)(?!\s|.|,)', r') ', text)
+    text = re.sub(r':(?![/\s])', r': ', text)
+    return text
+
+def process_excel(workbook):
+    """Excel全シートのセルを処理し、変更があったセルを黄色ハイライトする"""
+    highlight_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(min_row=1, max_col=sheet.max_column, max_row=sheet.max_row):
+            for cell in row:
+                if cell.value is None:
+                    continue
+                original = str(cell.value)
+                processed = process_excel_cell(original)
+                if processed != original:
+                    cell.value = processed
+                    cell.fill = highlight_fill
+    return workbook
+
+output_excel = "./output/output.xlsx"
+os.makedirs(os.path.dirname(output_excel), exist_ok=True)
+
 st.title("テキスト整形（英文）")
 st.write("英文フォントの半角への修正や約物の自動変換をします")
 
-option = st.radio("Word文書かテキストか整形対象を選択してください", ("Word文書", "テキスト文書"))
+option = st.radio("Word文書・Excel文書・テキストから整形対象を選択してください", ("Word文書", "Excel文書", "テキスト文書"))
 
 if option == "テキスト文書":
     if "text" not in st.session_state:
@@ -314,7 +345,7 @@ if option == "テキスト文書":
         except Exception as e:
             st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
             
-else:    
+elif option == "Word文書":    
     # st.file_uploaderウィジェットの作成
     # type引数で受け付けるファイルの形式を'.docx'に限定
     uploaded_file = st.file_uploader("Wordファイル（.docx）をアップロード", type=['docx'])
@@ -350,7 +381,7 @@ else:
                     if _elem.tag == qn('w:t') and _elem.text:
                         _prev_t = _elem
                     elif _elem.tag == qn('w:br') and _prev_t is not None:
-                        stripped = _prev_t.text.rstrip(' 	')
+                        stripped = _prev_t.text.rstrip(' \t')
                         if stripped != _prev_t.text:
                             _prev_t.text = stripped
 
@@ -372,12 +403,6 @@ else:
             doc.save(output_word)
             st.success("処理が完了しました")
 
-            # ドキュメントの内容を表示
-            #st.subheader("処理されたWordファイルの内容")
-        
-            # ドキュメント内の各段落を読み込んで表示
-            #for para in doc.paragraphs:
-            #    st.write(para.text)
             st.success("ダウンロードボタンを押してください")
             with open(output_word, "rb") as file:
                 word_data = file.read()
@@ -395,4 +420,34 @@ else:
         except Exception as e:
             st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
     else:
-        st.info("ファイルをアップロードしてください。")            
+        st.info("ファイルをアップロードしてください。")
+
+elif option == "Excel文書":
+    uploaded_file = st.file_uploader("Excelファイル（.xlsx）をアップロード", type=['xlsx'])
+
+    if uploaded_file is not None:
+        file_name = os.path.splitext(uploaded_file.name)[0]
+        st.success("ファイルが正常にアップロードされました。")
+
+        try:
+            wb = openpyxl.load_workbook(uploaded_file)
+            wb = process_excel(wb)
+            wb.save(output_excel)
+            st.success("処理が完了しました")
+
+            st.success("ダウンロードボタンを押してください")
+            with open(output_excel, "rb") as file:
+                excel_data = file.read()
+                st.download_button(
+                    label="Excel文書をダウンロード",
+                    data=excel_data,
+                    file_name=file_name+"_chk.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    on_click="ignore"
+                )
+            print(f"ダウンロードしました。")
+
+        except Exception as e:
+            st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+    else:
+        st.info("ファイルをアップロードしてください。")
