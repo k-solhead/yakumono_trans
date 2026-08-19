@@ -5,7 +5,10 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from requests.exceptions import Timeout
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import os
+import time
 import sys
 
 highlight_color = (0, 1, 0)
@@ -14,29 +17,51 @@ local_dic = "./my_custom_dict.json"
 count = 0
 fix_word = []   # 要修正単語のリスト（weblio検索で同じ単語で04 Client Errorを繰り返さないよう設定）
 
+# セッション使い回し + レートリミット対策
+_session = None
+_last_check_time = 0
+
+def _get_session():
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        retries = Retry(total=2, backoff_factor=1, allowed_methods=["GET"])
+        _session.mount("https://", HTTPAdapter(max_retries=retries))
+        _session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+    return _session
+
 # 単語をweblioで確認する（True:実在、False:スペルミス）
 def checkweblio(word):
     if word in fix_word:
         print("fix_wordに該当")
         return False
-    url1 = "https://ejje.weblio.jp/content/"
-    url = url1 + str(word)
+    url = "https://ejje.weblio.jp/content/" + str(word)
+
+    # レートリミット対策：前回のリクエストから 0.3秒以上開ける
+    global _last_check_time
+    elapsed = time.time() - _last_check_time
+    if elapsed < 0.3:
+        time.sleep(0.3 - elapsed)
+
     try:
-        res = requests.get(url, timeout=5)
+        session = _get_session()
+        res = session.get(url, timeout=10)
+        _last_check_time = time.time()
         if res.status_code == 404:  # 検索に該当の単語が見つからない場合、
             fix_word.append(word)
             print(fix_word)
         elif res.ok:
             soup = BeautifulSoup(res.text, "html.parser")
             elem = soup.select("#summary > div.summaryM.descriptionWrp > p > span.content-explanation.ej")
-            if elem:
-                return True
-            else:
-                return False
+            return bool(elem)
         else:
             return False
-    except Timeout:
-        pass
+    except Exception:
+        return False
 
 # 分かち書きの英単語から指定された文字列を検索する関数
 # 検索文字列を含む完全な単語の座標の配列をリスト化
