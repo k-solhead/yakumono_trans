@@ -42,7 +42,7 @@ with st.expander("辞書上書き"):
     
     if uploaded_file is not None:
         try:
-            data = json.loads(uploaded_file)
+            data = json.load(uploaded_file)
             
             st.success("JSONファイルが正常に読み込まれました")
             
@@ -50,7 +50,7 @@ with st.expander("辞書上書き"):
             os.makedirs(backup_dir, exist_ok=True)
             
             # 2. バックアップファイルの作成 (コピー)
-            timestamp = datetime.now().strftime('%Y%MMDD') # YYYYMMDD形式の日付
+            timestamp = datetime.now().strftime('%Y%m%d') # YYYYMMDD形式の日付
             backup_file_name = f"{os.path.splitext(local_dic)[0]}-backup{timestamp}{os.path.splitext(local_dic)[1]}"
             backup_path = os.path.join(backup_dir, backup_file_name)
 
@@ -60,7 +60,7 @@ with st.expander("辞書上書き"):
             
             # 元ファイルを上書き保存
             with open(local_dic, 'w', encoding='utf-8') as f:
-                f.write(data)
+                json.dump(data, f, ensure_ascii=False, indent=2)
             print(f"元のファイルを更新しました: {local_dic}")
 
         except FileNotFoundError:
