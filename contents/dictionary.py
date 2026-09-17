@@ -59,8 +59,10 @@ with st.expander("辞書上書き"):
             with open(local_dic, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
-            # メモリ上の辞書も更新
-            spell.word_frequency.load_json(data)
+            # メモリ上の辞書も更新（内部辞書を置き換え）
+            spell.word_frequency._dictionary.clear()
+            spell.word_frequency._dictionary.update(data)
+            spell.word_frequency._update_dictionary()
             st.success(f"辞書ファイルを更新しました: {local_dic}")
 
         except FileNotFoundError:
