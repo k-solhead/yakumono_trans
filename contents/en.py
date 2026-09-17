@@ -383,9 +383,15 @@ elif option == "Word文書":
                     if _elem.tag == qn('w:t') and _elem.text:
                         _prev_t = _elem
                     elif _elem.tag == qn('w:br') and _prev_t is not None:
-                        stripped = _prev_t.text.rstrip(' \t')
+                        stripped = _prev_t.text.rstrip(' 	')
                         if stripped != _prev_t.text:
                             _prev_t.text = stripped
+
+                # 段落文末の末尾空白も削除（w:brが無い段落の最終w:t）
+                if _prev_t is not None:
+                    stripped = _prev_t.text.rstrip(' 	')
+                    if stripped != _prev_t.text:
+                        _prev_t.text = stripped
 
                 # 箇条書きスタイルの解除とビュレット挿入
                 is_list = para.style.name.startswith('List') or para._element.pPr is not None and para._element.pPr.find(
