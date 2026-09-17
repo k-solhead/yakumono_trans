@@ -297,6 +297,7 @@ def process_excel_cell(text):
     text = re.sub(r'(?<!\s)\(', r' (', text)
     text = re.sub(r'\)(?!\s|.|,)', r') ', text)
     text = re.sub(r':(?![/\s])', r': ', text)
+    text = re.sub(r'[ ]+(\r?\n)', r'\1', text)
     return text
 
 def process_excel(workbook):
