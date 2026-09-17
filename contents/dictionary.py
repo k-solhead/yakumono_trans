@@ -44,8 +44,6 @@ with st.expander("辞書上書き"):
         try:
             data = json.load(uploaded_file)
             
-            st.success("JSONファイルが正常に読み込まれました")
-            
             # バックアップディレクトリが存在しない場合は作成
             os.makedirs(backup_dir, exist_ok=True)
             
@@ -56,15 +54,17 @@ with st.expander("辞書上書き"):
 
             # 元ファイルの更新日時も保持してコピー
             shutil.copy2(local_dic, backup_path)
-            print(f"バックアップを作成しました: {backup_path}")
             
             # 元ファイルを上書き保存
             with open(local_dic, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"元のファイルを更新しました: {local_dic}")
+            
+            # メモリ上の辞書も更新
+            spell.word_frequency.from_json(data)
+            st.success(f"辞書ファイルを更新しました: {local_dic}")
 
         except FileNotFoundError:
-            print(f"エラー: {local_dic} が見つかりません。")
+            st.error(f"エラー: {local_dic} が見つかりません。")
         except Exception as e:
-            print(f"処理中にエラーが発生しました: {e}")
+            st.error(f"処理中にエラーが発生しました: {e}")
 
