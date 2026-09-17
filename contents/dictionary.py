@@ -60,7 +60,7 @@ with st.expander("辞書上書き"):
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
             # メモリ上の辞書も更新
-            spell.word_frequency.from_json(data)
+            spell.word_frequency.load_json(data)
             st.success(f"辞書ファイルを更新しました: {local_dic}")
 
         except FileNotFoundError:
