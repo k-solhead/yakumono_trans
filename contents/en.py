@@ -395,6 +395,7 @@ else:
                     t = re.sub(r'(?<!\s)\(', r' (', t)
                     t = re.sub(r'\)(?!\s|.|,)', r') ', t)
                     t = re.sub(r':(?![/\s])', r': ', t)
+                    t = re.sub(r'[ ]+(\r?\n)', r'\1', t)
                     set_run_text_preserve_images(run, t)
 
                 apply_run_highlights(para)
