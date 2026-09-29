@@ -13,6 +13,9 @@ import re
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 from openpyxl.utils import get_column_letter
+from pptx import Presentation
+from pptx.util import Pt as PptPt
+from pptx.oxml import parse_xml as pptx_parse_xml
 
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
@@ -58,6 +61,18 @@ def set_run_text_preserve_images(run, new_text):
         t.text = new_text
         t.set(qn('xml:space'), 'preserve')
         r.append(t)
+
+def set_highlight_pptx(run, color):
+    """PowerPointのrunに背景色ハイライトを設定する（a:highlight要素）。
+    color: "FF0000" のようなRGB文字列（#無し）。"""
+    rPr = run._r.get_or_add_rPr()
+    hl = pptx_parse_xml(
+        '<a:highlight xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">'
+        f'<a:srgbClr val=\"{color}\"/>'
+        '</a:highlight>'
+    )
+    rPr.append(hl)
+    return run
 
 def zen_to_han(char):
     """全角英数記号を半角に変換"""
@@ -190,6 +205,149 @@ def apply_run_highlights(para):
                 wrapped.font.highlight_color = seg_highlight
             prev_r = new_r
 
+# PPT用ハイライト色
+PPT_HIGHLIGHT_COLORS = {
+    'bold': '9ACD32',      # 黄緑 (YellowGreen)
+    'italic': 'FF0000',    # 赤
+    '—': '0000FF',         # Em dash → 青
+    '–': '800080',         # En dash → 紫
+    'note': 'FF0000',      # ※/＊+数字 → 赤
+}
+
+def apply_run_highlights_pptx(para):
+    """PowerPoint段落内のボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
+    for run in list(para.runs):
+        run_text = run.text
+        if not run_text:
+            continue
+
+        base_color = None
+        if run.font.bold:
+            base_color = PPT_HIGHLIGHT_COLORS['bold']
+        if run.font.italic:
+            base_color = PPT_HIGHLIGHT_COLORS['italic']
+
+        segments = []
+        buffer = []
+        segment_color = PPT_HIGHLIGHT_COLORS.get(run_text[0], base_color)
+
+        for char in run_text:
+            char_color = PPT_HIGHLIGHT_COLORS.get(char, base_color)
+            if buffer and char_color != segment_color:
+                segments.append((''.join(buffer), segment_color))
+                buffer = [char]
+                segment_color = char_color
+                continue
+            buffer.append(char)
+
+        if buffer:
+            segments.append((''.join(buffer), segment_color))
+
+        if len(segments) == 1:
+            if segments[0][1] is not None:
+                set_highlight_pptx(run, segments[0][1])
+            continue
+
+        is_bold = run.font.bold
+        is_italic = run.font.italic
+        original_rpr = run._r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}rPr')
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        text0, color0 = segments[0]
+        run.text = text0
+        if color0 is not None:
+            set_highlight_pptx(run, color0)
+
+        prev_r = run._r
+        for seg_text, seg_color in segments[1:]:
+            new_r = pptx_parse_xml('<a:r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/>')
+            if rpr_template is not None:
+                new_r.append(deepcopy(rpr_template))
+            t = pptx_parse_xml('<a:t xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xml:space=\"preserve\"/>')
+            t.text = seg_text
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = type(run)(new_r, run._parent)
+            if is_bold:
+                wrapped.font.bold = True
+            if is_italic:
+                wrapped.font.italic = True
+            if seg_color is not None:
+                set_highlight_pptx(wrapped, seg_color)
+            prev_r = new_r
+
+def apply_note_highlight_pptx(para):
+    """PowerPoint段落内の※/＊/*+数字パターンを赤色ハイライトする。"""
+    if not para.runs:
+        return
+    # 各runの段落全体テキスト中での位置を記録
+    run_info = []
+    cursor = 0
+    for run in para.runs:
+        rt = run.text
+        run_info.append((run, cursor, cursor + len(rt)))
+        cursor += len(rt)
+    full_text = ''.join(r.text for r, _, _ in run_info)
+
+    matches = list(note_pattern.finditer(full_text))
+    if not matches:
+        return
+
+    for run, r_start, r_end in run_info:
+        if r_start == r_end:
+            continue
+        intersects = []
+        for m in matches:
+            i_start = max(m.start(), r_start)
+            i_end = min(m.end(), r_end)
+            if i_start < i_end:
+                intersects.append((i_start - r_start, i_end - r_start))
+        if not intersects:
+            continue
+
+        run_text = full_text[r_start:r_end]
+        is_bold = run.font.bold
+        is_italic = run.font.italic
+        original_rpr = run._r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}rPr')
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        segments = []
+        last_end = 0
+        for ls, le in intersects:
+            before = run_text[last_end:ls]
+            if before:
+                segments.append((before, None))
+            segments.append((run_text[ls:le], PPT_HIGHLIGHT_COLORS['note']))
+            last_end = le
+        remaining = run_text[last_end:]
+        if remaining:
+            segments.append((remaining, None))
+        if not segments:
+            continue
+
+        text0, color0 = segments[0]
+        run.text = text0
+        if color0 is not None:
+            set_highlight_pptx(run, color0)
+
+        prev_r = run._r
+        for seg_text, seg_color in segments[1:]:
+            new_r = pptx_parse_xml('<a:r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/>')
+            if rpr_template is not None:
+                new_r.append(deepcopy(rpr_template))
+            t = pptx_parse_xml('<a:t xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xml:space=\"preserve\"/>')
+            t.text = seg_text
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = type(run)(new_r, run._parent)
+            if is_bold:
+                wrapped.font.bold = True
+            if is_italic:
+                wrapped.font.italic = True
+            if seg_color is not None:
+                set_highlight_pptx(wrapped, seg_color)
+            prev_r = new_r
+
 # ※/＊/*+数字パターン（ハイライト対象）
 note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
 
@@ -278,7 +436,9 @@ def apply_note_highlight_per_run(para):
             prev_r = new_r
 
 output_word = "./output/output.docx"
+output_pptx = "./output/output.pptx"
 os.makedirs(os.path.dirname(output_word), exist_ok=True)
+os.makedirs(os.path.dirname(output_pptx), exist_ok=True)
 
 replacement = {
     '  ':'',       # NBSP + 半角空白 を除去（行冒頭等への混入対策）
@@ -474,7 +634,7 @@ os.makedirs(os.path.dirname(output_excel), exist_ok=True)
 st.title("テキスト整形（和文）")
 st.write("和文フォントの全角・半角への修正や約物の自動変換をします")
 
-option = st.radio("Word文書・Excel文書・テキストから整形対象を選択してください", ("Word文書", "Excel文書", "テキスト文書"))
+option = st.radio("Word文書・Excel文書・PowerPoint文書・テキストから整形対象を選択してください", ("Word文書", "Excel文書", "PowerPoint文書", "テキスト文書"))
 
 if option == "テキスト文書":
     if "text" not in st.session_state:
@@ -606,6 +766,66 @@ elif option == "Word文書":
                 )
             print(f"ダウンロードしました。")
         
+        except Exception as e:
+            st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
+    else:
+        st.info("ファイルをアップロードしてください。")
+
+elif option == "PowerPoint文書":
+    uploaded_file = st.file_uploader("PowerPointファイル（.pptx）をアップロード", type=['pptx'])
+
+    if uploaded_file is not None:
+        file_name = os.path.splitext(uploaded_file.name)[0]
+        st.success("ファイルが正常にアップロードされました。")
+
+        try:
+            prs = Presentation(uploaded_file)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if not shape.has_text_frame:
+                        continue
+                    for para in shape.text_frame.paragraphs:
+                        # Run単位のテキスト置換
+                        for run in para.runs:
+                            t = run.text
+                            for old, new in replacement.items():
+                                t = t.replace(old, new)
+                            t = strip_spaces_around_numbers(t)
+                            run.text = t
+
+                        # 段落全体でURL正規化 + スラッシュ・コロン変換
+                        if para.runs:
+                            full_text = ''.join(run.text for run in para.runs)
+                            full_text = normalize_url_email(full_text)
+                            full_text = protect_urls(full_text, apply_slash_colon)
+                            full_text = strip_line_head_spaces(full_text)
+                            idx = 0
+                            for run in para.runs:
+                                run_len = len(run.text)
+                                run.text = full_text[idx:idx + run_len]
+                                idx += run_len
+
+                        # ボールド・斜体・ダッシュハイライト
+                        apply_run_highlights_pptx(para)
+
+                        # ※/*+数字パターンのハイライト
+                        apply_note_highlight_pptx(para)
+
+            prs.save(output_pptx)
+            st.success("処理が完了しました")
+
+            st.success("ダウンロードボタンを押してください")
+            with open(output_pptx, "rb") as file:
+                pptx_data = file.read()
+                st.download_button(
+                    label="PowerPoint文書をダウンロード",
+                    data=pptx_data,
+                    file_name=file_name+"_chk.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    on_click="ignore"
+                )
+            print(f"ダウンロードしました。")
+
         except Exception as e:
             st.error(f"ファイルの読み込み中にエラーが発生しました: {e}")
     else:
