@@ -1,6 +1,7 @@
 pymupdf==1.26.5
 pyspellchecker==0.5.6
 python-docx==1.2.0
+python-pptx==1.0.2
 requests==2.32.5
 bs4==0.0.2
 streamlit==1.56.0
