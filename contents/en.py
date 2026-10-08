@@ -484,9 +484,9 @@ elif option == "PowerPoint文書":
                             t = normalize_url_email(t)
                             for old, new in replacement.items():
                                 t = t.replace(old, new)
-                            t = re.sub(r'(?<!\\s)\\(', r' (', t)
-                            t = re.sub(r'\\)(?!\\s|.|,)', r') ', t)
-                            t = re.sub(r':(?![/\\s])', r': ', t)
+                            t = re.sub(r'(?<!\s)\(', r' (', t)
+                            t = re.sub(r'\)(?!\s|.|,)', r') ', t)
+                            t = re.sub(r':(?![/\s])', r': ', t)
                             t = re.sub(r'[ ]+(\r?\n)', r'\1', t)
                             run.text = t
 
