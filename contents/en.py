@@ -13,8 +13,6 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font
 from openpyxl.utils import get_column_letter
 from pptx import Presentation
-from pptx.util import Pt as PptPt
-from pptx.oxml import parse_xml as pptx_parse_xml
 
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
@@ -24,28 +22,46 @@ def set_run_text_preserve_images(run, new_text):
     """
     r = run._r
     t_elements = r.findall(qn('w:t'))
-    if t_elements:
+    control_tags = {qn('w:br'), qn('w:cr'), qn('w:tab')}
+    has_controls = any(child.tag in control_tags for child in r)
+
+    if t_elements and has_controls:
+        text_index = 0
+        cursor = 0
+        for child in r:
+            if child.tag == qn('w:t'):
+                start = cursor
+                while cursor < len(new_text) and new_text[cursor] not in '\n\r\t':
+                    cursor += 1
+                child.text = new_text[start:cursor]
+                child.set(qn('xml:space'), 'preserve')
+                text_index += 1
+            elif child.tag in {qn('w:br'), qn('w:cr')}:
+                if cursor < len(new_text) and new_text[cursor] == '\r':
+                    cursor += 1
+                if cursor < len(new_text) and new_text[cursor] == '\n':
+                    cursor += 1
+            elif child.tag == qn('w:tab'):
+                if cursor < len(new_text) and new_text[cursor] == '\t':
+                    cursor += 1
+        for t in t_elements[text_index:]:
+            t.text = ''
+    elif t_elements:
         t_elements[0].text = new_text
         t_elements[0].set(qn('xml:space'), 'preserve')
         for t in t_elements[1:]:
             t.text = ''
     elif new_text:
-        t = OxmlElement('w:t')
-        t.text = new_text
-        t.set(qn('xml:space'), 'preserve')
-        r.append(t)
+        if has_controls and not t_elements:
+            # 制御要素(w:br/w:cr/w:tab)のみのrun：new_textはpython-docxが合成した改行であり、実際のテキストではない
+            # w:tを生成すると_prev_tループで直前のw:tが上書きされるためスキップ
+            pass
+        else:
+            t = OxmlElement('w:t')
+            t.text = new_text
+            t.set(qn('xml:space'), 'preserve')
+            r.append(t)
 
-def set_highlight_pptx(run, color):
-    """PowerPointのrunに背景色ハイライトを設定する（a:highlight要素）。
-    color: "FF0000" のようなRGB文字列（#無し）。"""
-    rPr = run._r.get_or_add_rPr()
-    hl = pptx_parse_xml(
-        '<a:highlight xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">'
-        f'<a:srgbClr val=\"{color}\"/>'
-        '</a:highlight>'
-    )
-    rPr.append(hl)
-    return run
 
 def zen_to_han(char):
     """全角英数記号を半角に変換"""
@@ -136,75 +152,6 @@ def apply_run_highlights(para):
                 wrapped.font.highlight_color = seg_highlight
             prev_r = new_r
 
-# PPT用ハイライト色
-PPT_HIGHLIGHT_COLORS = {
-    'bold': '9ACD32',      # 黄緑 (YellowGreen)
-    'italic': 'FF0000',    # 赤
-    '—': '0000FF',         # Em dash → 青
-    '–': '800080',         # En dash → 紫
-}
-
-def apply_run_highlights_pptx(para):
-    """PowerPoint段落内のボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
-    for run in list(para.runs):
-        run_text = run.text
-        if not run_text:
-            continue
-
-        base_color = None
-        if run.font.bold:
-            base_color = PPT_HIGHLIGHT_COLORS['bold']
-        if run.font.italic:
-            base_color = PPT_HIGHLIGHT_COLORS['italic']
-
-        segments = []
-        buffer = []
-        segment_color = PPT_HIGHLIGHT_COLORS.get(run_text[0], base_color)
-
-        for char in run_text:
-            char_color = PPT_HIGHLIGHT_COLORS.get(char, base_color)
-            if buffer and char_color != segment_color:
-                segments.append((''.join(buffer), segment_color))
-                buffer = [char]
-                segment_color = char_color
-                continue
-            buffer.append(char)
-
-        if buffer:
-            segments.append((''.join(buffer), segment_color))
-
-        if len(segments) == 1:
-            if segments[0][1] is not None:
-                set_highlight_pptx(run, segments[0][1])
-            continue
-
-        is_bold = run.font.bold
-        is_italic = run.font.italic
-        original_rpr = run._r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}rPr')
-        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
-
-        text0, color0 = segments[0]
-        run.text = text0
-        if color0 is not None:
-            set_highlight_pptx(run, color0)
-
-        prev_r = run._r
-        for seg_text, seg_color in segments[1:]:
-            new_r = pptx_parse_xml('<a:r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/>')
-            if rpr_template is not None:
-                new_r.append(deepcopy(rpr_template))
-            t = pptx_parse_xml('<a:t xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xml:space=\"preserve\"/>')
-            t.text = seg_text
-            new_r.append(t)
-            prev_r.addnext(new_r)
-            wrapped = type(run)(new_r, run._parent)
-            if is_bold:
-                wrapped.font.bold = True
-            if is_italic:
-                wrapped.font.italic = True
-            if seg_color is not None:
-                set_highlight_pptx(wrapped, seg_color)
-            prev_r = new_r
 
 output_word = "./output/output.docx"
 output_pptx = "./output/output.pptx"
@@ -540,11 +487,27 @@ elif option == "PowerPoint文書":
                             t = re.sub(r'(?<!\\s)\\(', r' (', t)
                             t = re.sub(r'\\)(?!\\s|.|,)', r') ', t)
                             t = re.sub(r':(?![/\\s])', r': ', t)
-                            t = re.sub(r'[ ]+(\\r?\\n)', r'\\1', t)
+                            t = re.sub(r'[ ]+(\r?\n)', r'\1', t)
                             run.text = t
 
+                        # 段落末尾の空白/NBSP削除（改行前の半角スペース対応）
+                        # a:endParaRPr（段落終端）直前の最終a:tの末尾空白を除去
+                        ns = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+                        _last_t = None
+                        for _elem in para._p.iter():
+                            if _elem.tag == f'{ns}t' and _elem.text:
+                                _last_t = _elem
+                            elif _elem.tag == f'{ns}endParaRPr' and _last_t is not None:
+                                stripped = _last_t.text.rstrip(' 	 ')
+                                if stripped != _last_t.text:
+                                    _last_t.text = stripped
+                        if _last_t is not None:
+                            stripped = _last_t.text.rstrip(' 	 ')
+                            if stripped != _last_t.text:
+                                _last_t.text = stripped
+
                         # ボールド・斜体・ダッシュハイライト
-                        apply_run_highlights_pptx(para)
+                        pass
 
             prs.save(output_pptx)
             st.success("処理が完了しました")
