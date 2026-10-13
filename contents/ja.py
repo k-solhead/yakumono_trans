@@ -14,8 +14,45 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font
 from openpyxl.utils import get_column_letter
 from pptx import Presentation
-from pptx.util import Pt as PptPt
 from pptx.oxml import parse_xml as pptx_parse_xml
+
+A_NS = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+
+# PPT用ハイライト色（#指定）
+PPT_HIGHLIGHT_COLORS = {
+    'bold': '00FF00',   # bold → #00FF00
+    'italic': 'FF0000',  # italic → #FF0000
+    '—': '0000FF',       # Em dash → #0000FF
+    '–': '8B008B',       # En dash → #8B008B
+    'note': 'FF0000',    # ※/＊+数字 → #FF0000
+}
+
+def set_highlight_pptx(run, color):
+    """PowerPointのrunに背景色ハイライトを設定する（a:highlight要素）。
+    color: "FF0000" のようなRGB文字列（#無し）。
+
+    既存のa:highlightは必ず置換する。appendしただけだと重複要素の先頭
+    （翻訳作業用の白背景など）が優先され、新しい色が見えなくなるため。
+    またOOXMLスキーマ上a:highlightはa:latin/a:ea/a:csより前に置く。"""
+    rPr = run._r.get_or_add_rPr()
+    for hl in rPr.findall(f'{A_NS}highlight'):
+        rPr.remove(hl)
+    hl = pptx_parse_xml(
+        f'<a:highlight xmlns:a="{A}">'
+        f'<a:srgbClr val="{color.replace("#", "").upper()}"/>'
+        '</a:highlight>'
+    )
+    anchor = None
+    for tag in ('latin', 'ea', 'cs', 'sym'):
+        anchor = rPr.find(f'{A_NS}{tag}')
+        if anchor is not None:
+            break
+    if anchor is not None:
+        anchor.addprevious(hl)
+    else:
+        rPr.append(hl)
+    return run
 
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
@@ -62,17 +99,6 @@ def set_run_text_preserve_images(run, new_text):
         t.set(qn('xml:space'), 'preserve')
         r.append(t)
 
-def set_highlight_pptx(run, color):
-    """PowerPointのrunに背景色ハイライトを設定する（a:highlight要素）。
-    color: "FF0000" のようなRGB文字列（#無し）。"""
-    rPr = run._r.get_or_add_rPr()
-    hl = pptx_parse_xml(
-        '<a:highlight xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">'
-        f'<a:srgbClr val=\"{color}\"/>'
-        '</a:highlight>'
-    )
-    rPr.append(hl)
-    return run
 
 def zen_to_han(char):
     """全角英数記号を半角に変換"""
@@ -142,7 +168,7 @@ def apply_run_highlights(para):
     """ボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
     dash_highlights = {
         '—': WD_COLOR_INDEX.BLUE,
-        '–': WD_COLOR_INDEX.VIOLET,
+        '–': WD_COLOR_INDEX.VIOLET,  # Wordの標準パレットで#8B008Bに最も近い色
     }
 
     for run in list(para.runs):
@@ -205,17 +231,26 @@ def apply_run_highlights(para):
                 wrapped.font.highlight_color = seg_highlight
             prev_r = new_r
 
-# PPT用ハイライト色
-PPT_HIGHLIGHT_COLORS = {
-    'bold': '9ACD32',      # 黄緑 (YellowGreen)
-    'italic': 'FF0000',    # 赤
-    '—': '0000FF',         # Em dash → 青
-    '–': '800080',         # En dash → 紫
-    'note': 'FF0000',      # ※/＊+数字 → 赤
-}
+
+# ※/＊/*+数字パターン（ハイライト対象）
+note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
+
+
+# ============================================================
+# PowerPoint (.pptx) 用ハイライト処理
+# ============================================================
 
 def apply_run_highlights_pptx(para):
-    """PowerPoint段落内のボールド・イタリック・ダッシュ文字ごとのハイライトを適用する。"""
+    """PowerPoint段落内のボールド・イタリック・ダッシュ文字にハイライトを適用する。
+
+    bold → #00FF00 / italic → #FF0000 / Em dash — → #0000FF / En dash – → #8B008B
+    既存のa:highlight（翻訳作業用の白背景等）は対象セグメントでは必ず置換する。
+    """
+    dash_highlights = {
+        '—': PPT_HIGHLIGHT_COLORS['—'],
+        '–': PPT_HIGHLIGHT_COLORS['–'],
+    }
+
     for run in list(para.runs):
         run_text = run.text
         if not run_text:
@@ -229,10 +264,10 @@ def apply_run_highlights_pptx(para):
 
         segments = []
         buffer = []
-        segment_color = PPT_HIGHLIGHT_COLORS.get(run_text[0], base_color)
+        segment_color = dash_highlights.get(run_text[0], base_color)
 
         for char in run_text:
-            char_color = PPT_HIGHLIGHT_COLORS.get(char, base_color)
+            char_color = dash_highlights.get(char, base_color)
             if buffer and char_color != segment_color:
                 segments.append((''.join(buffer), segment_color))
                 buffer = [char]
@@ -250,7 +285,7 @@ def apply_run_highlights_pptx(para):
 
         is_bold = run.font.bold
         is_italic = run.font.italic
-        original_rpr = run._r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}rPr')
+        original_rpr = run._r.find(f'{A_NS}rPr')
         rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
 
         text0, color0 = segments[0]
@@ -260,10 +295,12 @@ def apply_run_highlights_pptx(para):
 
         prev_r = run._r
         for seg_text, seg_color in segments[1:]:
-            new_r = pptx_parse_xml('<a:r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/>')
+            new_r = pptx_parse_xml(f'<a:r xmlns:a="{A}"/>')
             if rpr_template is not None:
+                # テンプレートの既存ハイライト（翻訳管理用背景）はそのまま継承し、
+                # 有色セグメントのみ set_highlight_pptx で置換する
                 new_r.append(deepcopy(rpr_template))
-            t = pptx_parse_xml('<a:t xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xml:space=\"preserve\"/>')
+            t = pptx_parse_xml(f'<a:t xmlns:a="{A}" xml:space="preserve"/>')
             t.text = seg_text
             new_r.append(t)
             prev_r.addnext(new_r)
@@ -276,11 +313,14 @@ def apply_run_highlights_pptx(para):
                 set_highlight_pptx(wrapped, seg_color)
             prev_r = new_r
 
+
 def apply_note_highlight_pptx(para):
-    """PowerPoint段落内の※/＊/*+数字パターンを赤色ハイライトする。"""
+    """PowerPoint段落内の※/＊/*+数字パターンを#FF0000ハイライトする。
+
+    パターンがrunをまたぐ場合も対応するため、段落全体のテキストでマッチを
+    取り、各runの該当部分のみをハイライトに切り出す。"""
     if not para.runs:
         return
-    # 各runの段落全体テキスト中での位置を記録
     run_info = []
     cursor = 0
     for run in para.runs:
@@ -308,7 +348,7 @@ def apply_note_highlight_pptx(para):
         run_text = full_text[r_start:r_end]
         is_bold = run.font.bold
         is_italic = run.font.italic
-        original_rpr = run._r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}rPr')
+        original_rpr = run._r.find(f'{A_NS}rPr')
         rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
 
         segments = []
@@ -332,10 +372,12 @@ def apply_note_highlight_pptx(para):
 
         prev_r = run._r
         for seg_text, seg_color in segments[1:]:
-            new_r = pptx_parse_xml('<a:r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"/>')
+            new_r = pptx_parse_xml(f'<a:r xmlns:a="{A}"/>')
             if rpr_template is not None:
+                # テンプレートの既存ハイライト（翻訳管理用背景）はそのまま継承し、
+                # 有色セグメントのみ set_highlight_pptx で置換する
                 new_r.append(deepcopy(rpr_template))
-            t = pptx_parse_xml('<a:t xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xml:space=\"preserve\"/>')
+            t = pptx_parse_xml(f'<a:t xmlns:a="{A}" xml:space="preserve"/>')
             t.text = seg_text
             new_r.append(t)
             prev_r.addnext(new_r)
@@ -348,8 +390,8 @@ def apply_note_highlight_pptx(para):
                 set_highlight_pptx(wrapped, seg_color)
             prev_r = new_r
 
-# ※/＊/*+数字パターン（ハイライト対象）
-note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
+
+
 
 def apply_note_highlight_per_run(para):
     """段落内の※/＊/*+数字パターンをハイライトする。
@@ -687,19 +729,19 @@ elif option == "Word文書":
                             set_run_text_preserve_images(r, stripped)
                         break
 
-                # Run単位の処理：テキスト置換 + 数字前後空白除去（画像は保持）
+                # Run単位の処理：テキスト置換（画像は保持）
                 for run in para.runs:
                     t = run.text
                     for old, new in replacement.items():
                         t = t.replace(old, new)
-                    t = strip_spaces_around_numbers(t)
                     set_run_text_preserve_images(run, t)
 
-                # 段落全体でURL正規化 + スラッシュ・コロン変換（URL跨ぎrun対応）
+                # 段落全体でURL正規化 + スラッシュ・コロン変換 + 数字前後空白除去（URL跨ぎrun対応）
                 if para.runs:
                     full_text = ''.join(run.text for run in para.runs)
                     full_text = normalize_url_email(full_text)
                     full_text = protect_urls(full_text, apply_slash_colon)
+                    full_text = strip_spaces_around_numbers(full_text)
                     full_text = strip_line_head_spaces(full_text)
                     idx = 0
                     for run in para.runs:
@@ -790,14 +832,14 @@ elif option == "PowerPoint文書":
                             t = run.text
                             for old, new in replacement.items():
                                 t = t.replace(old, new)
-                            t = strip_spaces_around_numbers(t)
                             run.text = t
 
-                        # 段落全体でURL正規化 + スラッシュ・コロン変換
+                        # 段落全体でURL正規化 + スラッシュ・コロン変換 + 数字前後空白除去
                         if para.runs:
                             full_text = ''.join(run.text for run in para.runs)
                             full_text = normalize_url_email(full_text)
                             full_text = protect_urls(full_text, apply_slash_colon)
+                            full_text = strip_spaces_around_numbers(full_text)
                             full_text = strip_line_head_spaces(full_text)
                             idx = 0
                             for run in para.runs:

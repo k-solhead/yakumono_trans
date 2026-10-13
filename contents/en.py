@@ -13,6 +13,7 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font
 from openpyxl.utils import get_column_letter
 from pptx import Presentation
+from pptx.oxml import parse_xml as pptx_parse_xml
 
 def set_run_text_preserve_images(run, new_text):
     """run内の<w:drawing>等の画像要素を保持しつつ、テキスト部分のみを置き換える。
@@ -150,6 +151,204 @@ def apply_run_highlights(para):
             wrapped.italic = is_italic
             if seg_highlight != current_highlight:
                 wrapped.font.highlight_color = seg_highlight
+            prev_r = new_r
+
+
+# ============================================================
+# PowerPoint (.pptx) 用ハイライト処理
+# ============================================================
+
+A_NS = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+
+# PPT用ハイライト色（#指定）
+PPT_HIGHLIGHT_COLORS = {
+    'bold': '00FF00',   # bold → #00FF00
+    'italic': 'FF0000',  # italic → #FF0000
+    '—': '0000FF',       # Em dash → #0000FF
+    '–': '8B008B',       # En dash → #8B008B
+    'note': 'FF0000',    # ※/＊/*+数字 → #FF0000
+}
+
+# ※/＊/*+数字パターン（ハイライト対象）
+note_pattern = re.compile(r'[\u203B\uFF0A\*][0-9\uFF10-\uFF19]+')
+
+
+def set_highlight_pptx(run, color):
+    """PowerPointのrunに背景色ハイライトを設定する（a:highlight要素）。
+    color: "FF0000" のようなRGB文字列（#無し）。
+
+    既存のa:highlightは必ず置換する。appendしただけだと重複要素の先頭
+    （翻訳作業用の白背景など）が優先され、新しい色が見えなくなるため。
+    またOOXMLスキーマ上a:highlightはa:latin/a:ea/a:csより前に置く。"""
+    rPr = run._r.get_or_add_rPr()
+    for hl in rPr.findall(f'{A_NS}highlight'):
+        rPr.remove(hl)
+    hl = pptx_parse_xml(
+        f'<a:highlight xmlns:a="{A}">'
+        f'<a:srgbClr val="{color.replace("#", "").upper()}"/>'
+        '</a:highlight>'
+    )
+    anchor = None
+    for tag in ('latin', 'ea', 'cs', 'sym'):
+        anchor = rPr.find(f'{A_NS}{tag}')
+        if anchor is not None:
+            break
+    if anchor is not None:
+        anchor.addprevious(hl)
+    else:
+        rPr.append(hl)
+    return run
+
+
+def apply_run_highlights_pptx(para):
+    """PowerPoint段落内のボールド・イタリック・ダッシュ文字にハイライトを適用する。
+
+    bold → #00FF00 / italic → #FF0000 / Em dash — → #0000FF / En dash – → #8B008B
+    既存のa:highlight（翻訳作業用の白背景等）は対象セグメントでは必ず置換する。
+    """
+    dash_highlights = {
+        '—': PPT_HIGHLIGHT_COLORS['—'],
+        '–': PPT_HIGHLIGHT_COLORS['–'],
+    }
+
+    for run in list(para.runs):
+        run_text = run.text
+        if not run_text:
+            continue
+
+        base_color = None
+        if run.font.bold:
+            base_color = PPT_HIGHLIGHT_COLORS['bold']
+        if run.font.italic:
+            base_color = PPT_HIGHLIGHT_COLORS['italic']
+
+        segments = []
+        buffer = []
+        segment_color = dash_highlights.get(run_text[0], base_color)
+
+        for char in run_text:
+            char_color = dash_highlights.get(char, base_color)
+            if buffer and char_color != segment_color:
+                segments.append((''.join(buffer), segment_color))
+                buffer = [char]
+                segment_color = char_color
+                continue
+            buffer.append(char)
+
+        if buffer:
+            segments.append((''.join(buffer), segment_color))
+
+        if len(segments) == 1:
+            if segments[0][1] is not None:
+                set_highlight_pptx(run, segments[0][1])
+            continue
+
+        is_bold = run.font.bold
+        is_italic = run.font.italic
+        original_rpr = run._r.find(f'{A_NS}rPr')
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        text0, color0 = segments[0]
+        run.text = text0
+        if color0 is not None:
+            set_highlight_pptx(run, color0)
+
+        prev_r = run._r
+        for seg_text, seg_color in segments[1:]:
+            new_r = pptx_parse_xml(f'<a:r xmlns:a="{A}"/>')
+            if rpr_template is not None:
+                # テンプレートの既存ハイライト（翻訳管理用背景）はそのまま継承し、
+                # 有色セグメントのみ set_highlight_pptx で置換する
+                new_r.append(deepcopy(rpr_template))
+            t = pptx_parse_xml(f'<a:t xmlns:a="{A}" xml:space="preserve"/>')
+            t.text = seg_text
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = type(run)(new_r, run._parent)
+            if is_bold:
+                wrapped.font.bold = True
+            if is_italic:
+                wrapped.font.italic = True
+            if seg_color is not None:
+                set_highlight_pptx(wrapped, seg_color)
+            prev_r = new_r
+
+
+def apply_note_highlight_pptx(para):
+    """PowerPoint段落内の※/＊/*+数字パターンを#FF0000ハイライトする。
+
+    パターンがrunをまたぐ場合も対応するため、段落全体のテキストでマッチを
+    取り、各runの該当部分のみをハイライトに切り出す。"""
+    if not para.runs:
+        return
+    run_info = []
+    cursor = 0
+    for run in para.runs:
+        rt = run.text
+        run_info.append((run, cursor, cursor + len(rt)))
+        cursor += len(rt)
+    full_text = ''.join(r.text for r, _, _ in run_info)
+
+    matches = list(note_pattern.finditer(full_text))
+    if not matches:
+        return
+
+    for run, r_start, r_end in run_info:
+        if r_start == r_end:
+            continue
+        intersects = []
+        for m in matches:
+            i_start = max(m.start(), r_start)
+            i_end = min(m.end(), r_end)
+            if i_start < i_end:
+                intersects.append((i_start - r_start, i_end - r_start))
+        if not intersects:
+            continue
+
+        run_text = full_text[r_start:r_end]
+        is_bold = run.font.bold
+        is_italic = run.font.italic
+        original_rpr = run._r.find(f'{A_NS}rPr')
+        rpr_template = deepcopy(original_rpr) if original_rpr is not None else None
+
+        segments = []
+        last_end = 0
+        for ls, le in intersects:
+            before = run_text[last_end:ls]
+            if before:
+                segments.append((before, None))
+            segments.append((run_text[ls:le], PPT_HIGHLIGHT_COLORS['note']))
+            last_end = le
+        remaining = run_text[last_end:]
+        if remaining:
+            segments.append((remaining, None))
+        if not segments:
+            continue
+
+        text0, color0 = segments[0]
+        run.text = text0
+        if color0 is not None:
+            set_highlight_pptx(run, color0)
+
+        prev_r = run._r
+        for seg_text, seg_color in segments[1:]:
+            new_r = pptx_parse_xml(f'<a:r xmlns:a="{A}"/>')
+            if rpr_template is not None:
+                # テンプレートの既存ハイライト（翻訳管理用背景）はそのまま継承し、
+                # 有色セグメントのみ set_highlight_pptx で置換する
+                new_r.append(deepcopy(rpr_template))
+            t = pptx_parse_xml(f'<a:t xmlns:a="{A}" xml:space="preserve"/>')
+            t.text = seg_text
+            new_r.append(t)
+            prev_r.addnext(new_r)
+            wrapped = type(run)(new_r, run._parent)
+            if is_bold:
+                wrapped.font.bold = True
+            if is_italic:
+                wrapped.font.italic = True
+            if seg_color is not None:
+                set_highlight_pptx(wrapped, seg_color)
             prev_r = new_r
 
 
@@ -507,7 +706,10 @@ elif option == "PowerPoint文書":
                                 _last_t.text = stripped
 
                         # ボールド・斜体・ダッシュハイライト
-                        pass
+                        apply_run_highlights_pptx(para)
+
+                        # ※/*+数字パターンのハイライト
+                        apply_note_highlight_pptx(para)
 
             prs.save(output_pptx)
             st.success("処理が完了しました")
